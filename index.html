@@ -31,7 +31,7 @@
 const {useState,useEffect,useRef,useCallback,useMemo}=React;
 
 // ── CONSTANTES ────────────────────────────────────────────────────────
-const VERSION="v2.0";
+const VERSION="v2.1";
 const CLIENT_ID="343869806932-59pi5fq8micnj2rrlagmcl6c9dvrad5l.apps.googleusercontent.com";
 const API_KEY="AIzaSyAnX2AqSv_od3LYvT7n8WaCWL5T0WTmxZM";
 const SCOPES="https://www.googleapis.com/auth/drive.file";
@@ -839,15 +839,6 @@ function App(){
         </Modal>
       )}
 
-      {/* FAB */}
-      {tab!=="nuevo"&&(
-        <button onClick={()=>setTab("nuevo")}
-          style={{position:"fixed",bottom:80,right:20,width:56,height:56,borderRadius:"50%",
-            background:C.accent,border:"none",fontSize:26,cursor:"pointer",
-            boxShadow:`0 4px 24px ${C.accent}66`,color:"#0f0f13",fontWeight:700,zIndex:100}}>
-          +
-        </button>
-      )}
     </div>
   );
 }
