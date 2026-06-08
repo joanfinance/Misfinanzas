@@ -474,7 +474,7 @@ function App(){
     a.click();
   };
 
-  const TABS=[["dashboard","📊"],["familiar","🏠"],["personal","👤"],["recurrentes","🔁"],["nuevo","＋"],["mas","⋯"]];
+  const TABS=[["dashboard","📊"],["familiar","🏠"],["personal","👤"],["recurrentes","🔁"],["mas","⋯"]];
 
   // ── RENDER ────────────────────────────────────────────────────────
   return(
@@ -838,6 +838,14 @@ function App(){
           </div>
         </Modal>
       )}
+
+      {/* FAB */}
+      <button onClick={()=>setTab("nuevo")}
+        style={{position:"fixed",bottom:80,right:20,width:56,height:56,borderRadius:"50%",
+          background:C.accent,border:"none",fontSize:26,cursor:"pointer",
+          boxShadow:`0 4px 24px ${C.accent}66`,color:"#0f0f13",fontWeight:700,zIndex:100}}>
+        +
+      </button>
 
     </div>
   );
