@@ -30,7 +30,7 @@
 <script type="text/babel">
 const {useState,useEffect,useRef,useCallback,useMemo}=React;
 
-const VERSION="v2.2";
+const VERSION="v2.3";
 const CLIENT_ID="343869806932-59pi5fq8micnj2rrlagmcl6c9dvrad5l.apps.googleusercontent.com";
 const API_KEY="AIzaSyAnX2AqSv_od3LYvT7n8WaCWL5T0WTmxZM";
 const SCOPES="https://www.googleapis.com/auth/drive.file";
@@ -315,48 +315,59 @@ function Presupuestos({presupuestos,gastosMes,onSave}){
 
 // ── SUBCOMPONENTE: RESUMEN ANUAL ──────────────────────────────────────
 function ResumenAnual({movimientos,anio}){
+  const [bloque,setBloque]=useState("familiar");
+  const color=bloque==="familiar"?C.accent:C.personal;
   const filas=useMemo(()=>MESES.map((mes,mi)=>{
-    const movs=movimientos.filter(m=>{const d=new Date(m.fecha);return d.getFullYear()===anio&&d.getMonth()===mi;});
-    const sum=(bl,ti)=>movs.filter(m=>m.bloque===bl&&m.tipo===ti).reduce((a,m)=>a+m.importe,0);
-    const ingFam=sum("familiar","ingreso"),ingPer=sum("personal","ingreso");
-    const gasFam=sum("familiar","gasto"),gasPer=sum("personal","gasto");
-    return{mes:mes.slice(0,3),ingFam,ingPer,gasFam,gasPer,sal:(ingFam+ingPer)-(gasFam+gasPer)};
-  }),[movimientos,anio]);
-  const tot=filas.reduce((a,f)=>({ingFam:a.ingFam+f.ingFam,ingPer:a.ingPer+f.ingPer,gasFam:a.gasFam+f.gasFam,gasPer:a.gasPer+f.gasPer,sal:a.sal+f.sal}),{ingFam:0,ingPer:0,gasFam:0,gasPer:0,sal:0});
-  const td=(v,color)=><td style={{padding:"5px 3px",textAlign:"right",color,fontFamily:"'DM Mono',monospace",whiteSpace:"nowrap",fontSize:11}}>{v>0?fmt(v):"—"}</td>;
+    const movs=movimientos.filter(m=>{const d=new Date(m.fecha);return d.getFullYear()===anio&&d.getMonth()===mi&&m.bloque===bloque;});
+    const ing=movs.filter(m=>m.tipo==="ingreso").reduce((a,m)=>a+m.importe,0);
+    const gas=movs.filter(m=>m.tipo==="gasto").reduce((a,m)=>a+m.importe,0);
+    return{mes:mes.slice(0,3),ing,gas,sal:ing-gas,hay:ing>0||gas>0};
+  }),[movimientos,anio,bloque]);
+  const tot=filas.reduce((a,f)=>({ing:a.ing+f.ing,gas:a.gas+f.gas,sal:a.sal+f.sal}),{ing:0,gas:0,sal:0});
   return(
-    <div style={{overflowX:"auto"}}>
-      <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
-        <thead>
-          <tr>
-            <th style={{color:C.muted,fontWeight:600,padding:"5px 3px",borderBottom:`1px solid ${C.border}`,textAlign:"left"}}>Mes</th>
-            <th style={{color:C.accent,fontWeight:600,padding:"5px 3px",borderBottom:`1px solid ${C.border}`,textAlign:"right"}}>I.Fam</th>
-            <th style={{color:C.personal,fontWeight:600,padding:"5px 3px",borderBottom:`1px solid ${C.border}`,textAlign:"right"}}>I.Per</th>
-            <th style={{color:C.red,fontWeight:600,padding:"5px 3px",borderBottom:`1px solid ${C.border}`,textAlign:"right"}}>G.Fam</th>
-            <th style={{color:C.red,fontWeight:600,padding:"5px 3px",borderBottom:`1px solid ${C.border}`,textAlign:"right"}}>G.Per</th>
-            <th style={{color:C.yellow,fontWeight:600,padding:"5px 3px",borderBottom:`1px solid ${C.border}`,textAlign:"right"}}>Saldo</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filas.map(f=>(
-            <tr key={f.mes}>
-              <td style={{padding:"5px 3px",color:C.muted,fontWeight:600,fontSize:11}}>{f.mes}</td>
-              {td(f.ingFam,C.accent)}{td(f.ingPer,C.personal)}{td(f.gasFam,C.red)}{td(f.gasPer,C.red)}
-              <td style={{padding:"5px 3px",textAlign:"right",color:f.sal>=0?C.accent:C.red,fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:11}}>
-                {(f.ingFam+f.ingPer+f.gasFam+f.gasPer)>0?fmt(f.sal):"—"}
-              </td>
+    <>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+        {[["familiar","🏠 Familiar"],["personal","👤 Personal"]].map(([b,label])=>(
+          <button key={b} onClick={()=>setBloque(b)}
+            style={{padding:"9px",borderRadius:8,border:`2px solid ${bloque===b?(b==="personal"?C.personal:C.accent):C.border}`,
+              background:bloque===b?(b==="personal"?C.personalDim:C.accentDim):"transparent",
+              color:bloque===b?(b==="personal"?C.personal:C.accent):C.muted,
+              fontWeight:700,cursor:"pointer",fontSize:13}}>
+            {label}
+          </button>
+        ))}
+      </div>
+      <div style={{overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse"}}>
+          <thead>
+            <tr>
+              <th style={{color:C.muted,fontWeight:600,padding:"5px 3px",borderBottom:`1px solid ${C.border}`,textAlign:"left",fontSize:12}}>Mes</th>
+              <th style={{color,fontWeight:600,padding:"5px 3px",borderBottom:`1px solid ${C.border}`,textAlign:"right",fontSize:12}}>Ingresos</th>
+              <th style={{color:C.red,fontWeight:600,padding:"5px 3px",borderBottom:`1px solid ${C.border}`,textAlign:"right",fontSize:12}}>Gastos</th>
+              <th style={{color:C.yellow,fontWeight:600,padding:"5px 3px",borderBottom:`1px solid ${C.border}`,textAlign:"right",fontSize:12}}>Saldo</th>
             </tr>
-          ))}
-        </tbody>
-        <tfoot>
-          <tr style={{borderTop:`2px solid ${C.border}`}}>
-            <td style={{padding:"6px 3px",fontWeight:700,fontSize:11}}>Total</td>
-            {td(tot.ingFam,C.accent)}{td(tot.ingPer,C.personal)}{td(tot.gasFam,C.red)}{td(tot.gasPer,C.red)}
-            <td style={{padding:"6px 3px",textAlign:"right",color:tot.sal>=0?C.accent:C.red,fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:11}}>{fmt(tot.sal)}</td>
-          </tr>
-        </tfoot>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {filas.map(f=>(
+              <tr key={f.mes}>
+                <td style={{padding:"5px 3px",color:C.muted,fontWeight:600,fontSize:12}}>{f.mes}</td>
+                <td style={{padding:"5px 3px",textAlign:"right",color,fontFamily:"'DM Mono',monospace",fontSize:12}}>{f.ing>0?fmt(f.ing):"—"}</td>
+                <td style={{padding:"5px 3px",textAlign:"right",color:C.red,fontFamily:"'DM Mono',monospace",fontSize:12}}>{f.gas>0?fmt(f.gas):"—"}</td>
+                <td style={{padding:"5px 3px",textAlign:"right",color:f.sal>=0?color:C.red,fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:12}}>{f.hay?fmt(f.sal):"—"}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr style={{borderTop:`2px solid ${C.border}`}}>
+              <td style={{padding:"6px 3px",fontWeight:700,fontSize:12}}>Total</td>
+              <td style={{padding:"6px 3px",textAlign:"right",color,fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:12}}>{fmt(tot.ing)}</td>
+              <td style={{padding:"6px 3px",textAlign:"right",color:C.red,fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:12}}>{fmt(tot.gas)}</td>
+              <td style={{padding:"6px 3px",textAlign:"right",color:tot.sal>=0?color:C.red,fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:12}}>{fmt(tot.sal)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </>
   );
 }
 
