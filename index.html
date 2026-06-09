@@ -12,7 +12,7 @@
   <style>
     *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
     body{background:#0f0f13;color:#e8e8f0;font-family:'DM Sans',sans-serif;}
-    select,input,button{font-family:'DM Sans',sans-serif;outline:none;}
+    select,input,button,textarea{font-family:'DM Sans',sans-serif;outline:none;}
     input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;}
     .sw{position:relative;display:inline-block;width:44px;height:26px;}
     .sw input{opacity:0;width:0;height:0;}
@@ -30,8 +30,7 @@
 <script type="text/babel">
 const {useState,useEffect,useRef,useCallback,useMemo}=React;
 
-// ── CONSTANTES ────────────────────────────────────────────────────────
-const VERSION="v2.1";
+const VERSION="v2.2";
 const CLIENT_ID="343869806932-59pi5fq8micnj2rrlagmcl6c9dvrad5l.apps.googleusercontent.com";
 const API_KEY="AIzaSyAnX2AqSv_od3LYvT7n8WaCWL5T0WTmxZM";
 const SCOPES="https://www.googleapis.com/auth/drive.file";
@@ -46,179 +45,120 @@ const MESES=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","
 const C={
   bg:"#0f0f13",surface:"#16161d",card:"#1c1c26",border:"#2a2a3a",
   accent:"#6ee7b7",accentDim:"#1a3d30",red:"#f87171",redDim:"#3d1a1a",
-  yellow:"#fbbf24",text:"#e8e8f0",muted:"#6b6b80",
+  yellow:"#fbbf24",yellowDim:"#3d2e00",text:"#e8e8f0",muted:"#6b6b80",
   personal:"#818cf8",personalDim:"#1e1e3d",orange:"#fb923c",orangeDim:"#3d1e00",
 };
 
-// ── HELPERS ───────────────────────────────────────────────────────────
 const fmt=n=>new Intl.NumberFormat("es-ES",{style:"currency",currency:"EUR"}).format(n||0);
 const today=()=>new Date().toISOString().split("T")[0];
 const nowYM=()=>{const d=new Date();return{y:d.getFullYear(),m:d.getMonth()};};
 const toFloat=s=>parseFloat(String(s).replace(",","."))||0;
 const recKey=(id,y,m)=>`${id}-${y}-${m}`;
-const emptyData=()=>({movimientos:[],recurrentes:[],confirmados:{},lastSync:null});
-// Migra datos de versiones antiguas (recurrentesConfirmados -> confirmados)
+const getCats=(bloque,tipo)=>tipo==="ingreso"?(bloque==="familiar"?ING_FAMILIAR:ING_PERSONAL):(bloque==="familiar"?CAT_FAMILIAR:CAT_PERSONAL);
+const defaultCat=(bloque,tipo)=>getCats(bloque,tipo)[0];
+const emptyData=()=>({movimientos:[],recurrentes:[],confirmados:{},presupuestos:{},lastSync:null});
 const migrateData=raw=>{
   if(!raw)return emptyData();
   const d={...emptyData(),...raw};
-  if(raw.recurrentesConfirmados&&Object.keys(raw.recurrentesConfirmados).length>0){
+  if(raw.recurrentesConfirmados&&Object.keys(raw.recurrentesConfirmados).length>0)
     d.confirmados={...raw.recurrentesConfirmados,...(raw.confirmados||{})};
-  }
   if(!d.confirmados)d.confirmados={};
+  if(!d.presupuestos)d.presupuestos={};
   return d;
 };
-const getCats=(bloque,tipo)=>tipo==="ingreso"?(bloque==="familiar"?ING_FAMILIAR:ING_PERSONAL):(bloque==="familiar"?CAT_FAMILIAR:CAT_PERSONAL);
-const defaultCat=(bloque,tipo)=>getCats(bloque,tipo)[0];
 
 // ── GOOGLE DRIVE ──────────────────────────────────────────────────────
 let gapiReady=false,gisReady=false;
 const loadScript=src=>new Promise(res=>{const s=document.createElement("script");s.src=src;s.onload=res;document.head.appendChild(s);});
-
-async function initGapi(){
-  if(gapiReady)return;
-  await loadScript("https://apis.google.com/js/api.js");
-  await new Promise(res=>window.gapi.load("client",res));
-  await window.gapi.client.init({apiKey:API_KEY,discoveryDocs:["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"]});
-  gapiReady=true;
-}
-async function initGis(){
-  if(gisReady)return;
-  await loadScript("https://accounts.google.com/gsi/client");
-  gisReady=true;
-}
-async function signIn(silent=false){
-  await initGapi();await initGis();
-  return new Promise((res,rej)=>{
-    const tc=window.google.accounts.oauth2.initTokenClient({
-      client_id:CLIENT_ID,scope:SCOPES,
-      callback:r=>{if(r.error)return rej(r.error);res(r.access_token);}
-    });
-    tc.requestAccessToken(silent?{prompt:"none"}:{prompt:"consent"});
-  });
-}
-async function driveFileId(tok){
-  const r=await fetch(`https://www.googleapis.com/drive/v3/files?q=name='${FILE_NAME}'&spaces=drive&fields=files(id)`,{headers:{Authorization:`Bearer ${tok}`}});
-  return (await r.json()).files?.[0]?.id||null;
-}
-async function driveLoad(tok){
-  const id=await driveFileId(tok);
-  if(!id)return null;
-  return await (await fetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`,{headers:{Authorization:`Bearer ${tok}`}})).json();
-}
-async function driveSave(tok,data){
-  const id=await driveFileId(tok);
-  const blob=new Blob([JSON.stringify({...data,lastSync:new Date().toISOString()})],{type:"application/json"});
-  const meta=JSON.stringify({name:FILE_NAME,mimeType:"application/json"});
-  const form=new FormData();
-  form.append("metadata",new Blob([meta],{type:"application/json"}));
-  form.append("file",blob);
-  await fetch(id?`https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=multipart`:"https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
-    {method:id?"PATCH":"POST",headers:{Authorization:`Bearer ${tok}`},body:form});
-}
+async function initGapi(){if(gapiReady)return;await loadScript("https://apis.google.com/js/api.js");await new Promise(res=>window.gapi.load("client",res));await window.gapi.client.init({apiKey:API_KEY,discoveryDocs:["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"]});gapiReady=true;}
+async function initGis(){if(gisReady)return;await loadScript("https://accounts.google.com/gsi/client");gisReady=true;}
+async function signIn(silent=false){await initGapi();await initGis();return new Promise((res,rej)=>{const tc=window.google.accounts.oauth2.initTokenClient({client_id:CLIENT_ID,scope:SCOPES,callback:r=>{if(r.error)return rej(r.error);res(r.access_token);}});tc.requestAccessToken(silent?{prompt:"none"}:{prompt:"consent"});});}
+async function driveFileId(tok){const r=await fetch(`https://www.googleapis.com/drive/v3/files?q=name='${FILE_NAME}'&spaces=drive&fields=files(id)`,{headers:{Authorization:`Bearer ${tok}`}});return(await r.json()).files?.[0]?.id||null;}
+async function driveLoad(tok){const id=await driveFileId(tok);if(!id)return null;return await(await fetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`,{headers:{Authorization:`Bearer ${tok}`}})).json();}
+async function driveSave(tok,data){const id=await driveFileId(tok);const blob=new Blob([JSON.stringify({...data,lastSync:new Date().toISOString()})],{type:"application/json"});const meta=JSON.stringify({name:FILE_NAME,mimeType:"application/json"});const form=new FormData();form.append("metadata",new Blob([meta],{type:"application/json"}));form.append("file",blob);await fetch(id?`https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=multipart`:"https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",{method:id?"PATCH":"POST",headers:{Authorization:`Bearer ${tok}`},body:form});}
 
 // ── UI COMPONENTS ─────────────────────────────────────────────────────
-const Tag=({children,color=C.accent})=>(
-  <span style={{background:color+"22",color,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:600}}>{children}</span>
-);
-const Card=({children,style={}})=>(
-  <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:20,...style}}>{children}</div>
-);
+const Tag=({children,color=C.accent})=>(<span style={{background:color+"22",color,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:600}}>{children}</span>);
+const Card=({children,style={}})=>(<div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:20,...style}}>{children}</div>);
 const Btn=({children,onClick,variant="primary",small=false,disabled=false,style={}})=>{
   const vs={primary:{background:C.accent,color:"#0f0f13"},danger:{background:C.red,color:"#0f0f13"},
     ghost:{background:"transparent",color:C.muted,border:`1px solid ${C.border}`},
-    personal:{background:C.personal,color:"#0f0f13"},orange:{background:C.orange,color:"#0f0f13"}};
-  return(
-    <button onClick={disabled?undefined:onClick} style={{border:"none",borderRadius:10,cursor:disabled?"not-allowed":"pointer",
-      fontWeight:700,fontSize:small?13:15,padding:small?"7px 14px":"12px 22px",opacity:disabled?.4:1,
-      transition:"all .15s",...vs[variant],...style}}>
-      {children}
-    </button>
-  );
+    personal:{background:C.personal,color:"#0f0f13"},orange:{background:C.orange,color:"#0f0f13"},
+    yellow:{background:C.yellow,color:"#0f0f13"}};
+  return(<button onClick={disabled?undefined:onClick} style={{border:"none",borderRadius:10,cursor:disabled?"not-allowed":"pointer",fontWeight:700,fontSize:small?13:15,padding:small?"7px 14px":"12px 22px",opacity:disabled?.4:1,transition:"all .15s",...vs[variant],...style}}>{children}</button>);
 };
-const Field=({label,value,onChange,type="text",options,placeholder,autoFocus=false})=>{
+const Field=({label,value,onChange,type="text",options,placeholder,autoFocus=false,multiline=false})=>{
   const ref=useRef(null);
-  useEffect(()=>{
-    if(!autoFocus)return;
-    const t=setTimeout(()=>ref.current?.focus(),200);
-    return()=>clearTimeout(t);
-  },[autoFocus]);
+  useEffect(()=>{if(!autoFocus)return;const t=setTimeout(()=>ref.current?.focus(),200);return()=>clearTimeout(t);},[autoFocus]);
   return(
     <div style={{display:"flex",flexDirection:"column",gap:6}}>
       <label style={{color:C.muted,fontSize:12,fontWeight:600,letterSpacing:1}}>{label}</label>
       {options
-        ?<select value={value} onChange={e=>onChange(e.target.value)}
-            style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"10px 12px",fontSize:15}}>
+        ?<select value={value} onChange={e=>onChange(e.target.value)} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"10px 12px",fontSize:15}}>
             <option value="">— seleccionar —</option>
             {options.map(o=><option key={o}>{o}</option>)}
           </select>
-        :<input ref={ref} type={type} inputMode={type==="number"?"decimal":undefined}
-            value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder}
-            style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"10px 12px",fontSize:15}}/>
+        :multiline
+          ?<textarea ref={ref} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} rows={3}
+              style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"10px 12px",fontSize:15,resize:"none"}}/>
+          :<input ref={ref} type={type} inputMode={type==="number"?"decimal":undefined} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder}
+              style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"10px 12px",fontSize:15}}/>
       }
     </div>
   );
 };
-const PBar=({value,max,color=C.accent})=>{
+const PBar=({value,max,color=C.accent,alert=false})=>{
   const pct=max?Math.min(100,Math.abs(value)/Math.abs(max)*100):0;
-  return<div style={{background:C.border,borderRadius:4,height:6,overflow:"hidden"}}><div style={{width:`${pct}%`,background:color,height:"100%",borderRadius:4,transition:"width .4s"}}/></div>;
+  const col=alert&&pct>=100?C.red:alert&&pct>=80?C.orange:color;
+  return<div style={{background:C.border,borderRadius:4,height:6,overflow:"hidden"}}><div style={{width:`${pct}%`,background:col,height:"100%",borderRadius:4,transition:"width .4s"}}/></div>;
 };
 const BarChart=({data,color=C.accent})=>{
   const max=Math.max(...data.map(d=>Math.abs(d.v)),1);
-  return(
-    <div style={{display:"flex",alignItems:"flex-end",gap:6,height:80}}>
-      {data.map((d,i)=>(
-        <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
-          <div style={{width:"100%",background:color,borderRadius:"4px 4px 0 0",height:`${(Math.abs(d.v)/max)*64}px`}}/>
-          <span style={{color:C.muted,fontSize:10}}>{d.l}</span>
-        </div>
-      ))}
-    </div>
-  );
+  return(<div style={{display:"flex",alignItems:"flex-end",gap:6,height:80}}>{data.map((d,i)=>(<div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}><div style={{width:"100%",background:color,borderRadius:"4px 4px 0 0",height:`${(Math.abs(d.v)/max)*64}px`}}/><span style={{color:C.muted,fontSize:10}}>{d.l}</span></div>))}</div>);
 };
 const PagoToggle=({value,onChange})=>(
   <div style={{display:"flex",flexDirection:"column",gap:6}}>
     <label style={{color:C.muted,fontSize:12,fontWeight:600,letterSpacing:1}}>FORMA DE PAGO</label>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
       {[["tarjeta","💳 Tarjeta"],["efectivo","💵 Efectivo"],["banco","🏦 Banco"]].map(([p,label])=>(
-        <button key={p} onClick={()=>onChange(p)}
-          style={{padding:"11px",borderRadius:10,border:`2px solid ${value===p?C.yellow:C.border}`,
-            background:value===p?C.yellow+"22":"transparent",color:value===p?C.yellow:C.muted,fontWeight:700,cursor:"pointer",fontSize:13}}>
-          {label}
-        </button>
+        <button key={p} onClick={()=>onChange(p)} style={{padding:"11px",borderRadius:10,border:`2px solid ${value===p?C.yellow:C.border}`,background:value===p?C.yellow+"22":"transparent",color:value===p?C.yellow:C.muted,fontWeight:700,cursor:"pointer",fontSize:13}}>{label}</button>
       ))}
     </div>
   </div>
 );
-const Switch=({checked,onChange})=>(
+const Switch=({label,sub,checked,onChange})=>(
   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderTop:`1px solid ${C.border}`}}>
-    <div>
-      <div style={{fontSize:14,fontWeight:600}}>🔁 Pago recurrente</div>
-      <div style={{fontSize:11,color:C.muted}}>Aparecerá cada mes para confirmar</div>
-    </div>
+    <div><div style={{fontSize:14,fontWeight:600}}>{label}</div>{sub&&<div style={{fontSize:11,color:C.muted}}>{sub}</div>}</div>
     <label className="sw"><input type="checkbox" checked={checked} onChange={e=>onChange(e.target.checked)}/><span className="sl"/></label>
   </div>
 );
-
-// ── MODAL GENÉRICO ────────────────────────────────────────────────────
 const Modal=({children,onClose})=>(
   <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 20px"}}>
-    <div onClick={e=>e.stopPropagation()} style={{background:C.card,borderRadius:20,padding:24,width:"100%",maxWidth:440,maxHeight:"82vh",overflowY:"auto"}}>
-      {children}
-    </div>
+    <div onClick={e=>e.stopPropagation()} style={{background:C.card,borderRadius:20,padding:24,width:"100%",maxWidth:440,maxHeight:"82vh",overflowY:"auto"}}>{children}</div>
   </div>
 );
 
-// ── SUBCOMPONENTE: MOVIMIENTOS CON FILTRO Y BÚSQUEDA ──────────────────
-function MovsList({movimientos,onEdit,onDelete}){
+// ── SUBCOMPONENTE: MOVIMIENTOS CON FILTRO, BÚSQUEDA Y ORDEN ──────────
+function MovsList({movimientos,onEdit,onDelete,onDuplicate}){
   const [filtro,setFiltro]=useState("familiar");
   const [q,setQ]=useState("");
+  const [orden,setOrden]=useState("fecha");
+  const [fechaDesde,setFechaDesde]=useState("");
+  const [fechaHasta,setFechaHasta]=useState("");
+  const [showFiltros,setShowFiltros]=useState(false);
+
   const filtered=useMemo(()=>{
     let list=filtro==="ingresos"
       ?movimientos.filter(m=>m.tipo==="ingreso")
       :movimientos.filter(m=>m.bloque===filtro&&m.tipo==="gasto");
-    if(q.trim())list=list.filter(m=>(m.concepto+m.categoria).toLowerCase().includes(q.toLowerCase()));
-    return list.slice(0,15);
-  },[movimientos,filtro,q]);
+    if(q.trim())list=list.filter(m=>(m.concepto+m.categoria+m.notas).toLowerCase().includes(q.toLowerCase()));
+    if(fechaDesde)list=list.filter(m=>m.fecha>=fechaDesde);
+    if(fechaHasta)list=list.filter(m=>m.fecha<=fechaHasta);
+    if(orden==="fecha")list=[...list].sort((a,b)=>b.fecha.localeCompare(a.fecha));
+    else if(orden==="importe")list=[...list].sort((a,b)=>b.importe-a.importe);
+    else if(orden==="categoria")list=[...list].sort((a,b)=>a.categoria.localeCompare(b.categoria));
+    return list.slice(0,20);
+  },[movimientos,filtro,q,orden,fechaDesde,fechaHasta]);
 
   return(
     <>
@@ -232,23 +172,70 @@ function MovsList({movimientos,onEdit,onDelete}){
           </button>
         ))}
       </div>
-      <input value={q} onChange={e=>setQ(e.target.value)} placeholder="🔍 Buscar concepto o categoría..."
-        style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,
-          padding:"8px 12px",fontSize:14,marginBottom:10}}/>
-      {filtered.map(m=>(
-        <div key={m.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
-          <div style={{flex:1,minWidth:0}}>
-            <div style={{fontSize:14,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-              {m.concepto||m.categoria}{m.recurrenteId?" 🔁":""}
+
+      {/* Barra búsqueda + filtros */}
+      <div style={{display:"flex",gap:8,marginBottom:8}}>
+        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="🔍 Buscar..."
+          style={{flex:1,background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"8px 12px",fontSize:14}}/>
+        <button onClick={()=>setShowFiltros(!showFiltros)}
+          style={{background:showFiltros?C.accentDim:"transparent",border:`1px solid ${showFiltros?C.accent:C.border}`,borderRadius:8,color:showFiltros?C.accent:C.muted,padding:"8px 12px",cursor:"pointer",fontSize:13,fontWeight:600}}>
+          ⚙
+        </button>
+      </div>
+
+      {/* Panel filtros avanzados */}
+      {showFiltros&&(
+        <div style={{background:C.surface,borderRadius:10,padding:12,marginBottom:10,display:"flex",flexDirection:"column",gap:10}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <div style={{display:"flex",flexDirection:"column",gap:4}}>
+              <label style={{color:C.muted,fontSize:11,fontWeight:600}}>DESDE</label>
+              <input type="date" value={fechaDesde} onChange={e=>setFechaDesde(e.target.value)}
+                style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"6px 8px",fontSize:13}}/>
             </div>
-            <div style={{fontSize:11,color:C.muted}}>{m.fecha} · {m.categoria}</div>
+            <div style={{display:"flex",flexDirection:"column",gap:4}}>
+              <label style={{color:C.muted,fontSize:11,fontWeight:600}}>HASTA</label>
+              <input type="date" value={fechaHasta} onChange={e=>setFechaHasta(e.target.value)}
+                style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"6px 8px",fontSize:13}}/>
+            </div>
           </div>
-          <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
-            <span style={{fontFamily:"'DM Mono',monospace",color:m.tipo==="ingreso"?C.accent:C.red,fontWeight:700,fontSize:14}}>
-              {m.tipo==="ingreso"?"+":"-"}{fmt(m.importe)}
-            </span>
-            <button onClick={()=>onEdit(m)} style={{background:"none",border:"none",cursor:"pointer",fontSize:15,padding:"2px"}}>✏️</button>
-            <button onClick={()=>onDelete(m)} style={{background:"none",border:"none",cursor:"pointer",fontSize:15,padding:"2px"}}>🗑️</button>
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            <label style={{color:C.muted,fontSize:11,fontWeight:600}}>ORDENAR POR</label>
+            <div style={{display:"flex",gap:6}}>
+              {[["fecha","Fecha"],["importe","Importe"],["categoria","Categoría"]].map(([o,label])=>(
+                <button key={o} onClick={()=>setOrden(o)}
+                  style={{flex:1,padding:"6px",borderRadius:6,border:`1.5px solid ${orden===o?C.accent:C.border}`,background:orden===o?C.accentDim:"transparent",color:orden===o?C.accent:C.muted,cursor:"pointer",fontSize:12,fontWeight:600}}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {(fechaDesde||fechaHasta)&&(
+            <button onClick={()=>{setFechaDesde("");setFechaHasta("");}}
+              style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,textAlign:"left"}}>
+              ✕ Limpiar fechas
+            </button>
+          )}
+        </div>
+      )}
+
+      {filtered.map(m=>(
+        <div key={m.id} style={{padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:14,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                {m.concepto||m.categoria}{m.recurrenteId?" 🔁":""}
+              </div>
+              <div style={{fontSize:11,color:C.muted}}>{m.fecha} · {m.categoria}{m.pago?` · ${m.pago==="tarjeta"?"💳":m.pago==="banco"?"🏦":"💵"}`:""}</div>
+              {m.notas&&<div style={{fontSize:12,color:C.muted,marginTop:3,fontStyle:"italic"}}>📝 {m.notas}</div>}
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:4,flexShrink:0,marginLeft:8}}>
+              <span style={{fontFamily:"'DM Mono',monospace",color:m.tipo==="ingreso"?C.accent:C.red,fontWeight:700,fontSize:14}}>
+                {m.tipo==="ingreso"?"+":"-"}{fmt(m.importe)}
+              </span>
+              <button onClick={()=>onDuplicate(m)} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,padding:"2px"}} title="Duplicar">⧉</button>
+              <button onClick={()=>onEdit(m)} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,padding:"2px"}}>✏️</button>
+              <button onClick={()=>onDelete(m)} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,padding:"2px"}}>🗑️</button>
+            </div>
           </div>
         </div>
       ))}
@@ -257,41 +244,105 @@ function MovsList({movimientos,onEdit,onDelete}){
   );
 }
 
+// ── SUBCOMPONENTE: PRESUPUESTOS ───────────────────────────────────────
+function Presupuestos({presupuestos,gastosMes,onSave}){
+  const [editando,setEditando]=useState(false);
+  const [vals,setVals]=useState({});
+
+  useEffect(()=>{if(editando)setVals({...presupuestos});},[editando,presupuestos]);
+
+  const todasCats=[...CAT_FAMILIAR,...CAT_PERSONAL];
+  const alertas=todasCats.filter(cat=>{
+    const pres=presupuestos[cat];
+    const gasto=gastosMes[cat]||0;
+    return pres&&gasto>=pres*0.8;
+  });
+
+  if(editando) return(
+    <Card style={{borderColor:C.yellow}}>
+      <div style={{fontSize:14,fontWeight:700,marginBottom:14}}>💰 Definir presupuestos</div>
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {todasCats.map(cat=>(
+          <div key={cat} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+            <span style={{fontSize:13,flex:1}}>{cat}</span>
+            <input type="number" inputMode="decimal" value={vals[cat]||""} onChange={e=>setVals(v=>({...v,[cat]:e.target.value}))}
+              placeholder="Sin límite"
+              style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"6px 8px",fontSize:13,width:100,textAlign:"right"}}/>
+          </div>
+        ))}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:16}}>
+        <Btn variant="ghost" small onClick={()=>setEditando(false)}>Cancelar</Btn>
+        <Btn variant="yellow" small onClick={()=>{const p={};Object.entries(vals).forEach(([k,v])=>{if(v)p[k]=toFloat(v);});onSave(p);setEditando(false);}}>Guardar</Btn>
+      </div>
+    </Card>
+  );
+
+  return(
+    <Card>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+        <div style={{fontSize:12,color:C.muted,letterSpacing:1}}>PRESUPUESTOS</div>
+        <Btn variant="ghost" small onClick={()=>setEditando(true)}>✏️ Editar</Btn>
+      </div>
+      {Object.keys(presupuestos).length===0&&(
+        <div style={{color:C.muted,fontSize:14,textAlign:"center",padding:"10px 0"}}>
+          Sin presupuestos definidos
+          <div style={{marginTop:8}}><Btn variant="yellow" small onClick={()=>setEditando(true)}>+ Definir presupuestos</Btn></div>
+        </div>
+      )}
+      {todasCats.filter(cat=>presupuestos[cat]).map(cat=>{
+        const pres=presupuestos[cat];
+        const gasto=gastosMes[cat]||0;
+        const pct=Math.min(100,(gasto/pres)*100);
+        const alerta=pct>=100?C.red:pct>=80?C.orange:C.accent;
+        return(
+          <div key={cat} style={{marginBottom:12}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+              <span style={{fontSize:13}}>{cat}</span>
+              <span style={{fontSize:12,fontFamily:"'DM Mono',monospace",color:alerta}}>
+                {fmt(gasto)} / {fmt(pres)}
+                {pct>=100&&" ⚠️"}
+                {pct>=80&&pct<100&&" ⚡"}
+              </span>
+            </div>
+            <PBar value={gasto} max={pres} color={C.accent} alert={true}/>
+          </div>
+        );
+      })}
+    </Card>
+  );
+}
+
 // ── SUBCOMPONENTE: RESUMEN ANUAL ──────────────────────────────────────
 function ResumenAnual({movimientos,anio}){
   const filas=useMemo(()=>MESES.map((mes,mi)=>{
     const movs=movimientos.filter(m=>{const d=new Date(m.fecha);return d.getFullYear()===anio&&d.getMonth()===mi;});
     const sum=(bl,ti)=>movs.filter(m=>m.bloque===bl&&m.tipo===ti).reduce((a,m)=>a+m.importe,0);
-    const ingFam=sum("familiar","ingreso");
-    const ingPer=sum("personal","ingreso");
-    const gasFam=sum("familiar","gasto");
-    const gasPer=sum("personal","gasto");
+    const ingFam=sum("familiar","ingreso"),ingPer=sum("personal","ingreso");
+    const gasFam=sum("familiar","gasto"),gasPer=sum("personal","gasto");
     return{mes:mes.slice(0,3),ingFam,ingPer,gasFam,gasPer,sal:(ingFam+ingPer)-(gasFam+gasPer)};
   }),[movimientos,anio]);
   const tot=filas.reduce((a,f)=>({ingFam:a.ingFam+f.ingFam,ingPer:a.ingPer+f.ingPer,gasFam:a.gasFam+f.gasFam,gasPer:a.gasPer+f.gasPer,sal:a.sal+f.sal}),{ingFam:0,ingPer:0,gasFam:0,gasPer:0,sal:0});
-  const td=(v,color)=><td style={{padding:"6px 4px",textAlign:"right",color,fontFamily:"'DM Mono',monospace",whiteSpace:"nowrap"}}>{v>0?fmt(v):"—"}</td>;
+  const td=(v,color)=><td style={{padding:"5px 3px",textAlign:"right",color,fontFamily:"'DM Mono',monospace",whiteSpace:"nowrap",fontSize:11}}>{v>0?fmt(v):"—"}</td>;
   return(
     <div style={{overflowX:"auto"}}>
-      <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+      <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
         <thead>
           <tr>
-            <th style={{color:C.muted,fontWeight:600,padding:"6px 4px",borderBottom:`1px solid ${C.border}`,textAlign:"left"}}>Mes</th>
-            <th style={{color:C.accent,fontWeight:600,padding:"6px 4px",borderBottom:`1px solid ${C.border}`,textAlign:"right"}}>Ing.Fam</th>
-            <th style={{color:C.personal,fontWeight:600,padding:"6px 4px",borderBottom:`1px solid ${C.border}`,textAlign:"right"}}>Ing.Per</th>
-            <th style={{color:C.red,fontWeight:600,padding:"6px 4px",borderBottom:`1px solid ${C.border}`,textAlign:"right"}}>Gas.Fam</th>
-            <th style={{color:C.red,fontWeight:600,padding:"6px 4px",borderBottom:`1px solid ${C.border}`,textAlign:"right"}}>Gas.Per</th>
-            <th style={{color:C.yellow,fontWeight:600,padding:"6px 4px",borderBottom:`1px solid ${C.border}`,textAlign:"right"}}>Saldo</th>
+            <th style={{color:C.muted,fontWeight:600,padding:"5px 3px",borderBottom:`1px solid ${C.border}`,textAlign:"left"}}>Mes</th>
+            <th style={{color:C.accent,fontWeight:600,padding:"5px 3px",borderBottom:`1px solid ${C.border}`,textAlign:"right"}}>I.Fam</th>
+            <th style={{color:C.personal,fontWeight:600,padding:"5px 3px",borderBottom:`1px solid ${C.border}`,textAlign:"right"}}>I.Per</th>
+            <th style={{color:C.red,fontWeight:600,padding:"5px 3px",borderBottom:`1px solid ${C.border}`,textAlign:"right"}}>G.Fam</th>
+            <th style={{color:C.red,fontWeight:600,padding:"5px 3px",borderBottom:`1px solid ${C.border}`,textAlign:"right"}}>G.Per</th>
+            <th style={{color:C.yellow,fontWeight:600,padding:"5px 3px",borderBottom:`1px solid ${C.border}`,textAlign:"right"}}>Saldo</th>
           </tr>
         </thead>
         <tbody>
           {filas.map(f=>(
             <tr key={f.mes}>
-              <td style={{padding:"6px 4px",color:C.muted,fontWeight:600}}>{f.mes}</td>
-              {td(f.ingFam,C.accent)}
-              {td(f.ingPer,C.personal)}
-              {td(f.gasFam,C.red)}
-              {td(f.gasPer,C.red)}
-              <td style={{padding:"6px 4px",textAlign:"right",color:f.sal>=0?C.accent:C.red,fontFamily:"'DM Mono',monospace",fontWeight:700,whiteSpace:"nowrap"}}>
+              <td style={{padding:"5px 3px",color:C.muted,fontWeight:600,fontSize:11}}>{f.mes}</td>
+              {td(f.ingFam,C.accent)}{td(f.ingPer,C.personal)}{td(f.gasFam,C.red)}{td(f.gasPer,C.red)}
+              <td style={{padding:"5px 3px",textAlign:"right",color:f.sal>=0?C.accent:C.red,fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:11}}>
                 {(f.ingFam+f.ingPer+f.gasFam+f.gasPer)>0?fmt(f.sal):"—"}
               </td>
             </tr>
@@ -299,12 +350,9 @@ function ResumenAnual({movimientos,anio}){
         </tbody>
         <tfoot>
           <tr style={{borderTop:`2px solid ${C.border}`}}>
-            <td style={{padding:"8px 4px",fontWeight:700,fontSize:12}}>Total</td>
-            {td(tot.ingFam,C.accent)}
-            {td(tot.ingPer,C.personal)}
-            {td(tot.gasFam,C.red)}
-            {td(tot.gasPer,C.red)}
-            <td style={{padding:"8px 4px",textAlign:"right",color:tot.sal>=0?C.accent:C.red,fontFamily:"'DM Mono',monospace",fontWeight:700}}>{fmt(tot.sal)}</td>
+            <td style={{padding:"6px 3px",fontWeight:700,fontSize:11}}>Total</td>
+            {td(tot.ingFam,C.accent)}{td(tot.ingPer,C.personal)}{td(tot.gasFam,C.red)}{td(tot.gasPer,C.red)}
+            <td style={{padding:"6px 3px",textAlign:"right",color:tot.sal>=0?C.accent:C.red,fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:11}}>{fmt(tot.sal)}</td>
           </tr>
         </tfoot>
       </table>
@@ -312,7 +360,7 @@ function ResumenAnual({movimientos,anio}){
   );
 }
 
-// ── APP PRINCIPAL ─────────────────────────────────────────────────────
+// ── APP ───────────────────────────────────────────────────────────────
 function App(){
   const [data,setData]=useState(emptyData());
   const tokenRef=useRef(null);
@@ -322,14 +370,9 @@ function App(){
   const [tab,setTab]=useState("dashboard");
   const [filterMes,setFilterMes]=useState(nowYM());
 
-  // Form nuevo movimiento
-  const mkForm=(bloque="familiar",tipo="gasto")=>({
-    fecha:today(),tipo,bloque,categoria:defaultCat(bloque,tipo),concepto:"",importe:"",pago:"tarjeta",esRecurrente:false,diaMes:"1"
-  });
+  const mkForm=(bloque="familiar",tipo="gasto")=>({fecha:today(),tipo,bloque,categoria:defaultCat(bloque,tipo),concepto:"",importe:"",pago:"tarjeta",notas:"",esRecurrente:false,diaMes:"1"});
   const [form,setForm]=useState(mkForm());
   const [saving,setSaving]=useState(false);
-
-  // Modales
   const [confirmDel,setConfirmDel]=useState(null);
   const [deleting,setDeleting]=useState(false);
   const [editMov,setEditMov]=useState(null);
@@ -339,30 +382,22 @@ function App(){
 
   const notify=useCallback(msg=>{setSyncMsg(msg);setTimeout(()=>setSyncMsg(""),3000);},[]);
 
-  // ── PERSISTENCIA ──────────────────────────────────────────────────
   const saveData=useCallback(async nd=>{
     setData(nd);
     try{localStorage.setItem("fj_bak",JSON.stringify(nd));}catch(_){}
     const t=tokenRef.current;
-    if(t){try{await driveSave(t,nd);notify("✓ Guardado");}catch(_){notify("⚠ Error Drive — guardado local");}}
-    else notify("✓ Guardado localmente");
+    if(t){try{await driveSave(t,nd);notify("✓ Guardado");}catch(_){notify("⚠ Error Drive");}}
+    else notify("✓ Guardado local");
   },[notify]);
 
   const connectDrive=useCallback(async(silent=false)=>{
     try{
       setSyncing(true);
-      const t=await signIn(silent);
-      tokenRef.current=t;setToken(t);
+      const t=await signIn(silent);tokenRef.current=t;setToken(t);
       localStorage.setItem("fj_drv","1");
       const remote=await driveLoad(t);
-      if(remote){
-        setData(migrateData(remote));
-        if(!silent)notify("✓ Datos cargados desde Drive");
-      }else{
-        const bak=localStorage.getItem("fj_bak");
-        if(bak){const bd=migrateData(JSON.parse(bak));setData(bd);await driveSave(t,bd);notify("✓ Backup migrado a Drive");}
-        else if(!silent)notify("✓ Conectado — sin datos previos");
-      }
+      if(remote){setData(migrateData(remote));if(!silent)notify("✓ Datos cargados desde Drive");}
+      else{const bak=localStorage.getItem("fj_bak");if(bak){const bd=migrateData(JSON.parse(bak));setData(bd);await driveSave(t,bd);notify("✓ Backup migrado a Drive");}else if(!silent)notify("✓ Conectado");}
     }catch(_){
       const bak=localStorage.getItem("fj_bak");
       if(bak){try{setData(migrateData(JSON.parse(bak)));}catch(__){}}
@@ -373,12 +408,11 @@ function App(){
 
   useEffect(()=>{if(localStorage.getItem("fj_drv")==="1")connectDrive(true);},[]);
 
-  // ── MOVIMIENTOS ───────────────────────────────────────────────────
   const addMovimiento=async()=>{
     if(!form.categoria||!form.importe||saving)return;
     setSaving(true);
     const importe=toFloat(form.importe);
-    const mov={id:Date.now(),fecha:form.fecha,tipo:form.tipo,bloque:form.bloque,categoria:form.categoria,concepto:form.concepto,importe,pago:form.pago};
+    const mov={id:Date.now(),fecha:form.fecha,tipo:form.tipo,bloque:form.bloque,categoria:form.categoria,concepto:form.concepto,importe,pago:form.pago,notas:form.notas};
     let nd={...data,movimientos:[mov,...(data.movimientos||[])]};
     if(form.esRecurrente){
       const rec={id:Date.now()+1,concepto:form.concepto,categoria:form.categoria,bloque:form.bloque,tipo:form.tipo,importe,dia:form.diaMes||"1",pago:form.pago};
@@ -386,99 +420,66 @@ function App(){
     }
     await saveData(nd);
     setForm(mkForm(form.bloque,form.tipo));
-    setSaving(false);
-    setTab("dashboard");
+    setSaving(false);setTab("dashboard");
   };
 
-  const deleteMovimiento=async id=>{
-    setDeleting(true);
-    await saveData({...data,movimientos:(data.movimientos||[]).filter(m=>m.id!==id)});
-    setDeleting(false);
-    setConfirmDel(null);
-  };
+  const deleteMovimiento=async id=>{setDeleting(true);await saveData({...data,movimientos:(data.movimientos||[]).filter(m=>m.id!==id)});setDeleting(false);setConfirmDel(null);};
+  const saveEditMov=async()=>{if(!editMov)return;const mov={...editMov,importe:toFloat(editMov.importe)};await saveData({...data,movimientos:(data.movimientos||[]).map(m=>m.id===mov.id?mov:m)});setEditMov(null);};
+  const duplicateMovimiento=async m=>{const dup={...m,id:Date.now(),fecha:today()};await saveData({...data,movimientos:[dup,...(data.movimientos||[])]});notify("✓ Registro duplicado");};
+  const savePresupuestos=async p=>{await saveData({...data,presupuestos:p});};
 
-  const saveEditMov=async()=>{
-    if(!editMov)return;
-    const mov={...editMov,importe:toFloat(editMov.importe)};
-    await saveData({...data,movimientos:(data.movimientos||[]).map(m=>m.id===mov.id?mov:m)});
-    setEditMov(null);
-  };
-
-  // ── RECURRENTES ───────────────────────────────────────────────────
   const confirmarRec=async(rec,importeOverride)=>{
     const{y,m}=filterMes;
     const importe=importeOverride?toFloat(importeOverride):rec.importe;
     const dia=String(rec.dia).padStart(2,"0"),mes=String(m+1).padStart(2,"0");
-    const mov={id:Date.now(),fecha:`${y}-${mes}-${dia}`,tipo:rec.tipo,bloque:rec.bloque,categoria:rec.categoria,concepto:rec.concepto,importe,pago:rec.pago,recurrenteId:rec.id};
+    const mov={id:Date.now(),fecha:`${y}-${mes}-${dia}`,tipo:rec.tipo,bloque:rec.bloque,categoria:rec.categoria,concepto:rec.concepto,importe,pago:rec.pago,notas:"",recurrenteId:rec.id};
     await saveData({...data,movimientos:[mov,...(data.movimientos||[])],confirmados:{...(data.confirmados||{}),[recKey(rec.id,y,m)]:true}});
     setEditRec(null);
   };
+  const deleteRecurrente=async id=>{await saveData({...data,recurrentes:(data.recurrentes||[]).filter(r=>r.id!==id)});setConfirmDelRec(null);};
 
-  const deleteRecurrente=async id=>{
-    await saveData({...data,recurrentes:(data.recurrentes||[]).filter(r=>r.id!==id)});
-    setConfirmDelRec(null);
-  };
-
-  // ── CÁLCULOS MES ─────────────────────────────────────────────────
-  const {movsMes,fI,fG,fS,pI,pG,pS,catF,catP,pendientes,last6,mesLabel}=useMemo(()=>{
-    const movs=data.movimientos||[];
-    const recs=data.recurrentes||[];
-    const conf=data.confirmados||{};
+  const {movsMes,fI,fG,fS,pI,pG,pS,catF,catP,gastosMes,pendientes,last6,mesLabel,difGas}=useMemo(()=>{
+    const movs=data.movimientos||[];const conf=data.confirmados||[];
     const{y,m}=filterMes;
     const movsMes=movs.filter(mv=>{const d=new Date(mv.fecha);return d.getFullYear()===y&&d.getMonth()===m;});
     const sum=(list,bl,ti)=>list.filter(mv=>mv.bloque===bl&&mv.tipo===ti).reduce((a,mv)=>a+mv.importe,0);
     const byCat=(list,bl)=>{const mp={};list.filter(mv=>mv.bloque===bl&&mv.tipo==="gasto").forEach(mv=>{mp[mv.categoria]=(mp[mv.categoria]||0)+mv.importe;});return Object.entries(mp).sort((a,b)=>b[1]-a[1]);};
+    const gastosMes={};movsMes.filter(mv=>mv.tipo==="gasto").forEach(mv=>{gastosMes[mv.categoria]=(gastosMes[mv.categoria]||0)+mv.importe;});
     const fI=sum(movsMes,"familiar","ingreso"),fG=sum(movsMes,"familiar","gasto");
     const pI=sum(movsMes,"personal","ingreso"),pG=sum(movsMes,"personal","gasto");
-    const pendientes=recs.filter(r=>!conf[recKey(r.id,y,m)]);
-    const last6=Array.from({length:6},(_,i)=>{
-      const d=new Date(y,m-5+i,1);
-      const mm=movs.filter(mv=>{const md=new Date(mv.fecha);return md.getFullYear()===d.getFullYear()&&md.getMonth()===d.getMonth();});
-      return{l:MESES[d.getMonth()].slice(0,3),v:sum(mm,"familiar","gasto")+sum(mm,"personal","gasto")};
-    });
-    // Comparativa mes anterior
+    const pendientes=(data.recurrentes||[]).filter(r=>!(conf[recKey(r.id,y,m)]));
     const prevM=m===0?{y:y-1,m:11}:{y,m:m-1};
     const movsPrev=movs.filter(mv=>{const d=new Date(mv.fecha);return d.getFullYear()===prevM.y&&d.getMonth()===prevM.m;});
     const prevGas=sum(movsPrev,"familiar","gasto")+sum(movsPrev,"personal","gasto");
     const curGas=fG+pG;
-    return{movsMes,fI,fG,fS:fI-fG,pI,pG,pS:pI-pG,catF:byCat(movsMes,"familiar"),catP:byCat(movsMes,"personal"),pendientes,last6,mesLabel:`${MESES[m]} ${y}`,prevGas,curGas};
+    const last6=Array.from({length:6},(_,i)=>{const d=new Date(y,m-5+i,1);const mm=movs.filter(mv=>{const md=new Date(mv.fecha);return md.getFullYear()===d.getFullYear()&&md.getMonth()===d.getMonth();});return{l:MESES[d.getMonth()].slice(0,3),v:sum(mm,"familiar","gasto")+sum(mm,"personal","gasto")};});
+    return{movsMes,fI,fG,fS:fI-fG,pI,pG,pS:pI-pG,catF:byCat(movsMes,"familiar"),catP:byCat(movsMes,"personal"),gastosMes,pendientes,last6,mesLabel:`${MESES[m]} ${y}`,difGas:curGas-prevGas};
   },[data,filterMes]);
 
-  // Comparativa separada para evitar desestructuración circular
-  const{prevGas,curGas}=useMemo(()=>{
-    const movs=data.movimientos||[];
-    const{y,m}=filterMes;
-    const sum=(list,bl,ti)=>list.filter(mv=>mv.bloque===bl&&mv.tipo===ti).reduce((a,mv)=>a+mv.importe,0);
-    const movsMesCur=movs.filter(mv=>{const d=new Date(mv.fecha);return d.getFullYear()===y&&d.getMonth()===m;});
-    const prevM=m===0?{y:y-1,m:11}:{y,m:m-1};
-    const movsPrev=movs.filter(mv=>{const d=new Date(mv.fecha);return d.getFullYear()===prevM.y&&d.getMonth()===prevM.m;});
-    return{
-      curGas:sum(movsMesCur,"familiar","gasto")+sum(movsMesCur,"personal","gasto"),
-      prevGas:sum(movsPrev,"familiar","gasto")+sum(movsPrev,"personal","gasto")
-    };
-  },[data,filterMes]);
-
-  const difGas=curGas-prevGas;
+  // Alertas de presupuesto
+  const alertasPresupuesto=useMemo(()=>{
+    const pres=data.presupuestos||{};
+    return Object.entries(pres).filter(([cat,limite])=>{
+      const gasto=gastosMes[cat]||0;
+      return gasto>=limite*0.8;
+    }).map(([cat,limite])=>({cat,limite,gasto:gastosMes[cat]||0,superado:(gastosMes[cat]||0)>=limite}));
+  },[data.presupuestos,gastosMes]);
 
   const prevMes=()=>setFilterMes(p=>p.m===0?{y:p.y-1,m:11}:{y:p.y,m:p.m-1});
   const nextMes=()=>setFilterMes(p=>p.m===11?{y:p.y+1,m:0}:{y:p.y,m:p.m+1});
+  const catOpts=getCats(form.bloque,form.tipo);
 
-  // ── EXPORT CSV ────────────────────────────────────────────────────
   const exportCSV=()=>{
-    const rows=[["Fecha","Tipo","Bloque","Categoría","Concepto","Importe","Pago","Recurrente"]];
-    (data.movimientos||[]).forEach(m=>rows.push([m.fecha,m.tipo,m.bloque,m.categoria,m.concepto||"",m.importe,m.pago||"",m.recurrenteId?"Sí":"No"]));
+    const rows=[["Fecha","Tipo","Bloque","Categoría","Concepto","Importe","Pago","Notas","Recurrente"]];
+    (data.movimientos||[]).forEach(m=>rows.push([m.fecha,m.tipo,m.bloque,m.categoria,m.concepto||"",m.importe,m.pago||"",m.notas||"",m.recurrenteId?"Sí":"No"]));
     const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
-    const a=document.createElement("a");
-    a.href=URL.createObjectURL(new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8;"}));
-    a.download=`finanzas_joan_${new Date().toISOString().slice(0,7)}.csv`;
-    a.click();
+    const a=document.createElement("a");a.href=URL.createObjectURL(new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8;"}));a.download=`finanzas_joan_${new Date().toISOString().slice(0,7)}.csv`;a.click();
   };
 
   const TABS=[["dashboard","📊"],["familiar","🏠"],["personal","👤"],["recurrentes","🔁"],["mas","⋯"]];
 
-  // ── RENDER ────────────────────────────────────────────────────────
   return(
-    <div style={{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:"'DM Sans',sans-serif",maxWidth:480,margin:"0 auto",paddingBottom:100,paddingTop:"env(safe-area-inset-top)"}}>
+    <div style={{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:"'DM Sans',sans-serif",maxWidth:480,margin:"0 auto",paddingBottom:120,paddingTop:"env(safe-area-inset-top)"}}>
 
       {/* HEADER */}
       <div style={{padding:"20px 20px 14px",borderBottom:`1px solid ${C.border}`}}>
@@ -489,8 +490,7 @@ function App(){
           </div>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
             {syncMsg&&<span style={{fontSize:11,color:C.accent}}>{syncMsg}</span>}
-            {token?<Tag color={C.accent}>● Drive</Tag>
-              :<Btn onClick={()=>connectDrive(false)} small variant="ghost">{syncing?"...":"🔗 Drive"}</Btn>}
+            {token?<Tag color={C.accent}>● Drive</Tag>:<Btn onClick={()=>connectDrive(false)} small variant="ghost">{syncing?"...":"🔗 Drive"}</Btn>}
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:16,marginTop:14}}>
@@ -504,21 +504,31 @@ function App(){
       <div style={{display:"flex",borderBottom:`1px solid ${C.border}`}}>
         {TABS.map(([t,icon])=>(
           <button key={t} onClick={()=>setTab(t)}
-            style={{flex:1,background:"none",border:"none",
-              borderBottom:tab===t?`2px solid ${t==="personal"?C.personal:t==="recurrentes"?C.orange:C.accent}`:"2px solid transparent",
-              color:tab===t?(t==="personal"?C.personal:t==="recurrentes"?C.orange:C.accent):C.muted,
-              padding:"13px 0",fontSize:17,cursor:"pointer"}}>
+            style={{flex:1,background:"none",border:"none",borderBottom:tab===t?`2px solid ${t==="personal"?C.personal:t==="recurrentes"?C.orange:C.accent}`:"2px solid transparent",color:tab===t?(t==="personal"?C.personal:t==="recurrentes"?C.orange:C.accent):C.muted,padding:"13px 0",fontSize:17,cursor:"pointer"}}>
             {icon}
           </button>
         ))}
       </div>
 
-      {/* CONTENIDO */}
       <div style={{padding:20}}>
 
         {/* ── DASHBOARD ── */}
         {tab==="dashboard"&&(
           <div style={{display:"flex",flexDirection:"column",gap:16}}>
+
+            {/* Alertas presupuesto */}
+            {alertasPresupuesto.length>0&&(
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {alertasPresupuesto.map(({cat,limite,gasto,superado})=>(
+                  <div key={cat} style={{background:superado?C.redDim:C.orangeDim,border:`1px solid ${superado?C.red:C.orange}`,borderRadius:10,padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div>
+                      <div style={{color:superado?C.red:C.orange,fontWeight:700,fontSize:13}}>{superado?"⚠️ Presupuesto superado":"⚡ Cerca del límite"} — {cat}</div>
+                      <div style={{color:C.muted,fontSize:11,marginTop:2}}>{fmt(gasto)} de {fmt(limite)}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* Alerta recurrentes */}
             {pendientes.length>0&&(
@@ -531,7 +541,7 @@ function App(){
               </div>
             )}
 
-            {/* Tarjetas saldo */}
+            {/* Saldos */}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
               <Card style={{borderColor:fS>=0?C.accentDim:C.redDim}}>
                 <div style={{fontSize:11,color:C.muted,marginBottom:4,letterSpacing:1}}>FAMILIAR</div>
@@ -545,21 +555,22 @@ function App(){
               </Card>
             </div>
 
-            {/* Comparativa mes anterior */}
-            {prevGas>0&&(
-              <div style={{background:C.surface,borderRadius:10,padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <span style={{color:C.muted,fontSize:13}}>vs {MESES[filterMes.m===0?11:filterMes.m-1]}</span>
-                <span style={{fontWeight:700,fontSize:14,color:difGas>0?C.red:C.accent,fontFamily:"'DM Mono',monospace"}}>
-                  {difGas>0?"▲":"▼"} {fmt(Math.abs(difGas))}
-                </span>
-              </div>
-            )}
+            {/* Comparativa */}
+            <div style={{background:C.surface,borderRadius:10,padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{color:C.muted,fontSize:13}}>vs mes anterior</span>
+              <span style={{fontWeight:700,fontSize:14,color:difGas>0?C.red:C.accent,fontFamily:"'DM Mono',monospace"}}>
+                {difGas===0?"=":`${difGas>0?"▲":"▼"} ${fmt(Math.abs(difGas))}`}
+              </span>
+            </div>
 
-            {/* Gráfica 6 meses */}
+            {/* Gráfica */}
             <Card>
               <div style={{fontSize:12,color:C.muted,marginBottom:12,letterSpacing:1}}>GASTO ÚLTIMOS 6 MESES</div>
               <BarChart data={last6} color={C.accent}/>
             </Card>
+
+            {/* Presupuestos */}
+            <Presupuestos presupuestos={data.presupuestos||{}} gastosMes={gastosMes} onSave={savePresupuestos}/>
 
             {/* Top gastos */}
             {catF.length>0&&(
@@ -571,16 +582,16 @@ function App(){
                       <span style={{fontSize:13}}>{cat}</span>
                       <span style={{fontSize:13,fontFamily:"'DM Mono',monospace",color:C.red}}>{fmt(imp)}</span>
                     </div>
-                    <PBar value={imp} max={catF[0][1]} color={C.accent}/>
+                    <PBar value={imp} max={catF[0][1]} color={C.accent} alert={!!(data.presupuestos||{})[cat]} />
                   </div>
                 ))}
               </Card>
             )}
 
-            {/* Últimos movimientos con filtro y búsqueda */}
+            {/* Movimientos */}
             <Card>
               <div style={{fontSize:12,color:C.muted,marginBottom:12,letterSpacing:1}}>MOVIMIENTOS</div>
-              <MovsList movimientos={data.movimientos||[]} onEdit={m=>setEditMov({...m})} onDelete={m=>setConfirmDel(m)}/>
+              <MovsList movimientos={data.movimientos||[]} onEdit={m=>setEditMov({...m})} onDelete={m=>setConfirmDel(m)} onDuplicate={duplicateMovimiento}/>
             </Card>
           </div>
         )}
@@ -605,22 +616,26 @@ function App(){
                     <span style={{fontSize:14}}>{cat}</span>
                     <span style={{fontFamily:"'DM Mono',monospace",color:C.red,fontSize:14}}>{fmt(imp)}</span>
                   </div>
-                  <PBar value={imp} max={catF[0][1]} color={C.accent}/>
+                  <PBar value={imp} max={catF[0][1]} color={C.accent} alert={!!(data.presupuestos||{})[cat]}/>
                 </div>
               ))}
             </Card>
             <Card>
               <div style={{fontSize:12,color:C.muted,letterSpacing:1,marginBottom:12}}>MOVIMIENTOS</div>
               {movsMes.filter(m=>m.bloque==="familiar").map(m=>(
-                <div key={m.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.concepto||m.categoria}{m.recurrenteId?" 🔁":""}</div>
-                    <div style={{fontSize:11,color:C.muted}}>{m.fecha} · {m.categoria} · {m.pago==="tarjeta"?"💳":m.pago==="banco"?"🏦":"💵"}</div>
-                  </div>
-                  <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
-                    <span style={{fontFamily:"'DM Mono',monospace",color:m.tipo==="ingreso"?C.accent:C.red,fontWeight:700,fontSize:14}}>{m.tipo==="ingreso"?"+":"-"}{fmt(m.importe)}</span>
-                    <button onClick={()=>setEditMov({...m})} style={{background:"none",border:"none",cursor:"pointer",fontSize:15}}>✏️</button>
-                    <button onClick={()=>setConfirmDel(m)} style={{background:"none",border:"none",cursor:"pointer",fontSize:15}}>🗑️</button>
+                <div key={m.id} style={{padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.concepto||m.categoria}{m.recurrenteId?" 🔁":""}</div>
+                      <div style={{fontSize:11,color:C.muted}}>{m.fecha} · {m.categoria} · {m.pago==="tarjeta"?"💳":m.pago==="banco"?"🏦":"💵"}</div>
+                      {m.notas&&<div style={{fontSize:12,color:C.muted,marginTop:2,fontStyle:"italic"}}>📝 {m.notas}</div>}
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:4,flexShrink:0,marginLeft:8}}>
+                      <span style={{fontFamily:"'DM Mono',monospace",color:m.tipo==="ingreso"?C.accent:C.red,fontWeight:700,fontSize:14}}>{m.tipo==="ingreso"?"+":"-"}{fmt(m.importe)}</span>
+                      <button onClick={()=>duplicateMovimiento(m)} style={{background:"none",border:"none",cursor:"pointer",fontSize:14}}>⧉</button>
+                      <button onClick={()=>setEditMov({...m})} style={{background:"none",border:"none",cursor:"pointer",fontSize:14}}>✏️</button>
+                      <button onClick={()=>setConfirmDel(m)} style={{background:"none",border:"none",cursor:"pointer",fontSize:14}}>🗑️</button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -655,15 +670,19 @@ function App(){
             <Card>
               <div style={{fontSize:12,color:C.muted,letterSpacing:1,marginBottom:12}}>MOVIMIENTOS</div>
               {movsMes.filter(m=>m.bloque==="personal").map(m=>(
-                <div key={m.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.concepto||m.categoria}</div>
-                    <div style={{fontSize:11,color:C.muted}}>{m.fecha} · {m.categoria}</div>
-                  </div>
-                  <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
-                    <span style={{fontFamily:"'DM Mono',monospace",color:m.tipo==="ingreso"?C.personal:C.red,fontWeight:700,fontSize:14}}>{m.tipo==="ingreso"?"+":"-"}{fmt(m.importe)}</span>
-                    <button onClick={()=>setEditMov({...m})} style={{background:"none",border:"none",cursor:"pointer",fontSize:15}}>✏️</button>
-                    <button onClick={()=>setConfirmDel(m)} style={{background:"none",border:"none",cursor:"pointer",fontSize:15}}>🗑️</button>
+                <div key={m.id} style={{padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.concepto||m.categoria}</div>
+                      <div style={{fontSize:11,color:C.muted}}>{m.fecha} · {m.categoria}</div>
+                      {m.notas&&<div style={{fontSize:12,color:C.muted,marginTop:2,fontStyle:"italic"}}>📝 {m.notas}</div>}
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:4,flexShrink:0,marginLeft:8}}>
+                      <span style={{fontFamily:"'DM Mono',monospace",color:m.tipo==="ingreso"?C.personal:C.red,fontWeight:700,fontSize:14}}>{m.tipo==="ingreso"?"+":"-"}{fmt(m.importe)}</span>
+                      <button onClick={()=>duplicateMovimiento(m)} style={{background:"none",border:"none",cursor:"pointer",fontSize:14}}>⧉</button>
+                      <button onClick={()=>setEditMov({...m})} style={{background:"none",border:"none",cursor:"pointer",fontSize:14}}>✏️</button>
+                      <button onClick={()=>setConfirmDel(m)} style={{background:"none",border:"none",cursor:"pointer",fontSize:14}}>🗑️</button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -676,35 +695,32 @@ function App(){
           <div style={{display:"flex",flexDirection:"column",gap:16}}>
             <Card style={{borderColor:pendientes.length>0?C.orange:C.accentDim}}>
               <div style={{fontSize:12,color:pendientes.length>0?C.orange:C.muted,letterSpacing:1,marginBottom:12}}>PENDIENTES — {mesLabel}</div>
-              {pendientes.length===0&&(
-                <div style={{color:C.accent,fontSize:14,textAlign:"center",padding:"10px 0"}}>✓ Todos los pagos fijos confirmados</div>
-              )}
+              {pendientes.length===0&&<div style={{color:C.accent,fontSize:14,textAlign:"center",padding:"10px 0"}}>✓ Todos confirmados</div>}
               {pendientes.map(rec=>(
-                  <div key={rec.id} style={{borderBottom:`1px solid ${C.border}`,paddingBottom:14,marginBottom:14}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
-                      <div>
-                        <div style={{fontSize:15,fontWeight:600}}>{rec.concepto||rec.categoria}</div>
-                        <div style={{fontSize:11,color:C.muted}}>{rec.categoria} · día {rec.dia} · {rec.pago==="tarjeta"?"💳":rec.pago==="banco"?"🏦":"💵"}</div>
-                      </div>
-                      <span style={{fontFamily:"'DM Mono',monospace",color:C.red,fontWeight:700,fontSize:16}}>{fmt(rec.importe)}</span>
+                <div key={rec.id} style={{borderBottom:`1px solid ${C.border}`,paddingBottom:14,marginBottom:14}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                    <div>
+                      <div style={{fontSize:15,fontWeight:600}}>{rec.concepto||rec.categoria}</div>
+                      <div style={{fontSize:11,color:C.muted}}>{rec.categoria} · día {rec.dia} · {rec.pago==="tarjeta"?"💳":rec.pago==="banco"?"🏦":"💵"}</div>
                     </div>
-                    {editRec?.id===rec.id?(
-                      <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                        <input value={editRec.importe} onChange={e=>setEditRec(r=>({...r,importe:e.target.value}))}
-                          inputMode="decimal" placeholder={String(rec.importe)}
-                          style={{flex:1,background:C.surface,border:`1px solid ${C.orange}`,borderRadius:8,color:C.text,padding:"8px 10px",fontSize:15}}/>
-                        <Btn small variant="orange" onClick={()=>confirmarRec(rec,editRec.importe)}>✓</Btn>
-                        <Btn small variant="ghost" onClick={()=>setEditRec(null)}>✕</Btn>
-                      </div>
-                    ):(
-                      <div style={{display:"flex",gap:8}}>
-                        <Btn small variant="orange" onClick={()=>confirmarRec(rec,null)} style={{flex:1}}>✓ Confirmar</Btn>
-                        <Btn small variant="ghost" onClick={()=>setEditRec({id:rec.id,importe:String(rec.importe)})}>✏ Editar</Btn>
-                      </div>
-                    )}
+                    <span style={{fontFamily:"'DM Mono',monospace",color:C.red,fontWeight:700,fontSize:16}}>{fmt(rec.importe)}</span>
                   </div>
-                ))}
-              </Card>
+                  {editRec?.id===rec.id?(
+                    <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                      <input value={editRec.importe} onChange={e=>setEditRec(r=>({...r,importe:e.target.value}))} inputMode="decimal"
+                        style={{flex:1,background:C.surface,border:`1px solid ${C.orange}`,borderRadius:8,color:C.text,padding:"8px 10px",fontSize:15}}/>
+                      <Btn small variant="orange" onClick={()=>confirmarRec(rec,editRec.importe)}>✓</Btn>
+                      <Btn small variant="ghost" onClick={()=>setEditRec(null)}>✕</Btn>
+                    </div>
+                  ):(
+                    <div style={{display:"flex",gap:8}}>
+                      <Btn small variant="orange" onClick={()=>confirmarRec(rec,null)} style={{flex:1}}>✓ Confirmar</Btn>
+                      <Btn small variant="ghost" onClick={()=>setEditRec({id:rec.id,importe:String(rec.importe)})}>✏ Editar</Btn>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </Card>
             <Card>
               <div style={{fontSize:12,color:C.muted,letterSpacing:1,marginBottom:12}}>PAGOS FIJOS</div>
               {(data.recurrentes||[]).length===0&&<div style={{color:C.muted,fontSize:14}}>Sin pagos fijos — activa el switch al crear un registro</div>}
@@ -713,9 +729,7 @@ function App(){
                 return(
                   <div key={rec.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
                     <div style={{flex:1}}>
-                      <div style={{fontSize:14,display:"flex",alignItems:"center",gap:6}}>
-                        {rec.concepto||rec.categoria}{conf&&<Tag color={C.accent}>✓</Tag>}
-                      </div>
+                      <div style={{fontSize:14,display:"flex",alignItems:"center",gap:6}}>{rec.concepto||rec.categoria}{conf&&<Tag color={C.accent}>✓</Tag>}</div>
                       <div style={{fontSize:11,color:C.muted}}>{rec.categoria} · día {rec.dia} · {rec.bloque==="familiar"?"🏠":"👤"}</div>
                     </div>
                     <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -737,9 +751,7 @@ function App(){
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
                 {["familiar","personal"].map(b=>(
                   <button key={b} onClick={()=>setForm(f=>({...f,bloque:b,categoria:defaultCat(b,f.tipo)}))}
-                    style={{padding:"12px",borderRadius:10,border:`2px solid ${form.bloque===b?(b==="personal"?C.personal:C.accent):C.border}`,
-                      background:form.bloque===b?(b==="personal"?C.personalDim:C.accentDim):"transparent",
-                      color:form.bloque===b?(b==="personal"?C.personal:C.accent):C.muted,fontWeight:700,cursor:"pointer",fontSize:14}}>
+                    style={{padding:"12px",borderRadius:10,border:`2px solid ${form.bloque===b?(b==="personal"?C.personal:C.accent):C.border}`,background:form.bloque===b?(b==="personal"?C.personalDim:C.accentDim):"transparent",color:form.bloque===b?(b==="personal"?C.personal:C.accent):C.muted,fontWeight:700,cursor:"pointer",fontSize:14}}>
                     {b==="familiar"?"🏠 Familiar":"👤 Personal"}
                   </button>
                 ))}
@@ -747,24 +759,22 @@ function App(){
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
                 {["gasto","ingreso"].map(t=>(
                   <button key={t} onClick={()=>setForm(f=>({...f,tipo:t,categoria:defaultCat(f.bloque,t)}))}
-                    style={{padding:"12px",borderRadius:10,border:`2px solid ${form.tipo===t?(t==="ingreso"?C.accent:C.red):C.border}`,
-                      background:form.tipo===t?(t==="ingreso"?C.accentDim:C.redDim):"transparent",
-                      color:form.tipo===t?(t==="ingreso"?C.accent:C.red):C.muted,fontWeight:700,cursor:"pointer",fontSize:14}}>
+                    style={{padding:"12px",borderRadius:10,border:`2px solid ${form.tipo===t?(t==="ingreso"?C.accent:C.red):C.border}`,background:form.tipo===t?(t==="ingreso"?C.accentDim:C.redDim):"transparent",color:form.tipo===t?(t==="ingreso"?C.accent:C.red):C.muted,fontWeight:700,cursor:"pointer",fontSize:14}}>
                     {t==="gasto"?"↑ Gasto":"↓ Ingreso"}
                   </button>
                 ))}
               </div>
               <div style={{display:"flex",flexDirection:"column",gap:14}}>
                 <Field label="IMPORTE (€)" type="number" value={form.importe} onChange={v=>setForm(f=>({...f,importe:v}))} placeholder="0.00" autoFocus={tab==="nuevo"}/>
-                <Field label="CATEGORÍA" value={form.categoria} onChange={v=>setForm(f=>({...f,categoria:v}))} options={getCats(form.bloque,form.tipo)}/>
+                <Field label="CATEGORÍA" value={form.categoria} onChange={v=>setForm(f=>({...f,categoria:v}))} options={catOpts}/>
                 <Field label="CONCEPTO (opcional)" value={form.concepto} onChange={v=>setForm(f=>({...f,concepto:v}))} placeholder="ej: Opel — gasolina"/>
+                <Field label="NOTAS (opcional)" value={form.notas} onChange={v=>setForm(f=>({...f,notas:v}))} placeholder="Añade contexto..." multiline={true}/>
                 <Field label="FECHA" type="date" value={form.fecha} onChange={v=>setForm(f=>({...f,fecha:v}))}/>
                 {form.bloque==="familiar"&&form.tipo==="gasto"&&<PagoToggle value={form.pago} onChange={v=>setForm(f=>({...f,pago:v}))}/>}
-                <Switch checked={form.esRecurrente} onChange={v=>setForm(f=>({...f,esRecurrente:v}))}/>
+                <Switch label="🔁 Pago recurrente" sub="Aparecerá cada mes para confirmar" checked={form.esRecurrente} onChange={v=>setForm(f=>({...f,esRecurrente:v}))}/>
                 {form.esRecurrente&&<Field label="DÍA DEL MES" type="number" value={form.diaMes} onChange={v=>setForm(f=>({...f,diaMes:v}))} placeholder="1-31"/>}
               </div>
-              <Btn onClick={addMovimiento} variant={form.bloque==="personal"?"personal":"primary"}
-                disabled={saving} style={{width:"100%",marginTop:20}}>
+              <Btn onClick={addMovimiento} variant={form.bloque==="personal"?"personal":"primary"} disabled={saving} style={{width:"100%",marginTop:20}}>
                 {saving?"Guardando...":"Guardar movimiento"}
               </Btn>
             </Card>
@@ -793,9 +803,9 @@ function App(){
 
       </div>
 
-      {/* MODAL BORRAR MOVIMIENTO */}
+      {/* MODAL BORRAR */}
       {confirmDel&&(
-        <Modal onClose={()=>setConfirmDel(null)}>
+        <Modal onClose={()=>!deleting&&setConfirmDel(null)}>
           <div style={{fontSize:16,fontWeight:700,marginBottom:8}}>🗑️ Borrar registro</div>
           <div style={{fontSize:14,color:C.muted,marginBottom:4}}>{confirmDel.concepto||confirmDel.categoria}</div>
           <div style={{fontSize:22,fontWeight:700,color:C.red,fontFamily:"'DM Mono',monospace",marginBottom:12}}>{fmt(confirmDel.importe)}</div>
@@ -807,7 +817,7 @@ function App(){
         </Modal>
       )}
 
-      {/* MODAL EDITAR MOVIMIENTO */}
+      {/* MODAL EDITAR */}
       {editMov&&(
         <Modal onClose={()=>setEditMov(null)}>
           <div style={{fontSize:16,fontWeight:700,marginBottom:20}}>✏️ Editar registro</div>
@@ -815,6 +825,7 @@ function App(){
             <Field label="IMPORTE (€)" type="number" value={String(editMov.importe)} onChange={v=>setEditMov(m=>({...m,importe:v}))} placeholder="0.00"/>
             <Field label="CATEGORÍA" value={editMov.categoria} onChange={v=>setEditMov(m=>({...m,categoria:v}))} options={getCats(editMov.bloque,editMov.tipo)}/>
             <Field label="CONCEPTO" value={editMov.concepto||""} onChange={v=>setEditMov(m=>({...m,concepto:v}))} placeholder="ej: Lidl semanal"/>
+            <Field label="NOTAS" value={editMov.notas||""} onChange={v=>setEditMov(m=>({...m,notas:v}))} placeholder="Añade contexto..." multiline={true}/>
             <Field label="FECHA" type="date" value={editMov.fecha} onChange={v=>setEditMov(m=>({...m,fecha:v}))}/>
             {editMov.bloque==="familiar"&&editMov.tipo==="gasto"&&<PagoToggle value={editMov.pago||"tarjeta"} onChange={v=>setEditMov(m=>({...m,pago:v}))}/>}
           </div>
@@ -841,9 +852,7 @@ function App(){
 
       {/* FAB */}
       <button onClick={()=>setTab("nuevo")}
-        style={{position:"fixed",bottom:80,right:20,width:56,height:56,borderRadius:"50%",
-          background:C.accent,border:"none",fontSize:26,cursor:"pointer",
-          boxShadow:`0 4px 24px ${C.accent}66`,color:"#0f0f13",fontWeight:700,zIndex:100}}>
+        style={{position:"fixed",bottom:80,right:20,width:56,height:56,borderRadius:"50%",background:C.accent,border:"none",fontSize:26,cursor:"pointer",boxShadow:`0 4px 24px ${C.accent}66`,color:"#0f0f13",fontWeight:700,zIndex:100}}>
         +
       </button>
 
