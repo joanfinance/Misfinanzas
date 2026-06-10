@@ -30,7 +30,7 @@
 <script type="text/babel">
 const {useState,useEffect,useRef,useCallback,useMemo}=React;
 
-const VERSION="v2.5";
+const VERSION="v2.6";
 const CLIENT_ID="343869806932-59pi5fq8micnj2rrlagmcl6c9dvrad5l.apps.googleusercontent.com";
 const API_KEY="AIzaSyAnX2AqSv_od3LYvT7n8WaCWL5T0WTmxZM";
 const SCOPES="https://www.googleapis.com/auth/drive.file";
@@ -74,7 +74,16 @@ async function initGapi(){if(gapiReady)return;await loadScript("https://apis.goo
 async function initGis(){if(gisReady)return;await loadScript("https://accounts.google.com/gsi/client");gisReady=true;}
 async function signIn(silent=false){await initGapi();await initGis();return new Promise((res,rej)=>{const tc=window.google.accounts.oauth2.initTokenClient({client_id:CLIENT_ID,scope:SCOPES,callback:r=>{if(r.error)return rej(r.error);res(r.access_token);}});tc.requestAccessToken(silent?{prompt:"none"}:{prompt:"consent"});});}
 async function driveFileId(tok){const r=await fetch(`https://www.googleapis.com/drive/v3/files?q=name='${FILE_NAME}'&spaces=drive&fields=files(id)`,{headers:{Authorization:`Bearer ${tok}`}});return(await r.json()).files?.[0]?.id||null;}
-async function driveLoad(tok){const id=await driveFileId(tok);if(!id)return null;return await(await fetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`,{headers:{Authorization:`Bearer ${tok}`}})).json();}
+async function driveLoad(tok){
+  const id=await driveFileId(tok);
+  console.log("Drive file ID:", id);
+  if(!id)return null;
+  const resp=await fetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`,{headers:{Authorization:`Bearer ${tok}`}});
+  console.log("Drive fetch status:", resp.status);
+  const json=await resp.json();
+  console.log("Drive data movimientos count:", json?.movimientos?.length);
+  return json;
+}
 async function driveSave(tok,data){const id=await driveFileId(tok);const blob=new Blob([JSON.stringify({...data,lastSync:new Date().toISOString()})],{type:"application/json"});const meta=JSON.stringify({name:FILE_NAME,mimeType:"application/json"});const form=new FormData();form.append("metadata",new Blob([meta],{type:"application/json"}));form.append("file",blob);await fetch(id?`https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=multipart`:"https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",{method:id?"PATCH":"POST",headers:{Authorization:`Bearer ${tok}`},body:form});}
 
 // ── UI COMPONENTS ─────────────────────────────────────────────────────
@@ -408,12 +417,10 @@ function App(){
       localStorage.setItem("fj_drv","1");
       const remote=await driveLoad(t);
       if(remote){
-        // Always prefer Drive over localStorage
         const merged=migrateData(remote);
         setData(merged);
-        // Update localStorage with Drive data
         try{localStorage.setItem("fj_bak",JSON.stringify(merged));}catch(_){}
-        if(!silent)notify("✓ Datos cargados desde Drive");
+        notify(`✓ Drive: ${merged.movimientos?.length||0} registros`);
       }else{
         const bak=localStorage.getItem("fj_bak");
         if(bak){const bd=migrateData(JSON.parse(bak));setData(bd);await driveSave(t,bd);notify("✓ Backup migrado a Drive");}
