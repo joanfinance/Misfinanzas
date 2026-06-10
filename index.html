@@ -30,7 +30,7 @@
 <script type="text/babel">
 const {useState,useEffect,useRef,useCallback,useMemo}=React;
 
-const VERSION="v2.4";
+const VERSION="v2.5";
 const CLIENT_ID="343869806932-59pi5fq8micnj2rrlagmcl6c9dvrad5l.apps.googleusercontent.com";
 const API_KEY="AIzaSyAnX2AqSv_od3LYvT7n8WaCWL5T0WTmxZM";
 const SCOPES="https://www.googleapis.com/auth/drive.file";
@@ -511,7 +511,13 @@ function App(){
           </div>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
             {syncMsg&&<span style={{fontSize:11,color:C.accent}}>{syncMsg}</span>}
-            {token?<Tag color={C.accent}>● Drive</Tag>:<Btn onClick={()=>connectDrive(false)} small variant="ghost">{syncing?"...":"🔗 Drive"}</Btn>}
+            {token
+              ?<button onClick={()=>connectDrive(false)}
+                  style={{background:C.accentDim,border:`1px solid ${C.accent}`,borderRadius:8,color:C.accent,padding:"5px 10px",cursor:"pointer",fontSize:12,fontWeight:600}}>
+                  ↻ Drive ({(data.movimientos||[]).length})
+                </button>
+              :<Btn onClick={()=>connectDrive(false)} small variant="ghost">{syncing?"...":"🔗 Drive"}</Btn>
+            }
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:16,marginTop:14}}>
