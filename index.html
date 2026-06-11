@@ -820,7 +820,17 @@ function App(){
         {/* ── MÁS ── */}
         {tab==="mas"&&(
           <div style={{display:"flex",flexDirection:"column",gap:16}}>
-            <Card>
+            <Card style={{borderColor:C.orange}}>
+              <div style={{fontSize:14,fontWeight:700,marginBottom:8}}>🔄 Resetear caché local</div>
+              <div style={{color:C.muted,fontSize:13,marginBottom:14}}>Si la app no carga los datos correctos de Drive, borra el caché local y fuerza recarga.</div>
+              <Btn variant="orange" style={{width:"100%"}} onClick={()=>{
+                localStorage.removeItem("fj_bak");
+                localStorage.removeItem("fj_drv");
+                notify("✓ Caché borrado — reconecta Drive");
+                setToken(null);
+                tokenRef.current=null;
+              }}>🗑 Borrar caché y desconectar</Btn>
+            </Card>
               <div style={{fontSize:16,fontWeight:700,marginBottom:16}}>Resumen anual</div>
               <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
                 <button onClick={()=>setAnioAnual(a=>a-1)} style={{background:"none",border:"none",color:C.muted,fontSize:20,cursor:"pointer"}}>‹</button>
