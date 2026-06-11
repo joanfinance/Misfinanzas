@@ -29,7 +29,7 @@
 <script type="text/babel" data-presets="react">
 const {useState, useEffect, useRef, useCallback, useMemo} = React;
 
-const VERSION = "v2.8";
+const VERSION = "v2.9";
 const CLIENT_ID = "343869806932-59pi5fq8micnj2rrlagmcl6c9dvrad5l.apps.googleusercontent.com";
 const API_KEY = "AIzaSyAnX2AqSv_od3LYvT7n8WaCWL5T0WTmxZM";
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
@@ -178,7 +178,7 @@ function PBar({value, max, color, alert}) {
   const col = alert && pct>=100 ? C.red : alert && pct>=80 ? C.orange : color;
   return (
     <div style={{background:C.border,borderRadius:4,height:6,overflow:"hidden"}}>
-      <div style={{width:`${pct}%`,background:col,height:"100%",borderRadius:4,transition:"width 0.4s"}}/>
+      <div style={{width:`${pct}%`,background:col,height:"100%",borderRadius:4,transition:"width .4s"}}/>
     </div>
   );
 }
@@ -937,6 +937,38 @@ function App() {
         <Modal onClose={()=>setEditMov(null)}>
           <div style={{fontSize:16,fontWeight:700,marginBottom:20}}>✏️ Editar registro</div>
           <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            {/* Selector bloque */}
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              <label style={{color:C.muted,fontSize:12,fontWeight:600,letterSpacing:1}}>BLOQUE</label>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                {["familiar","personal"].map(b=>(
+                  <button key={b} onClick={()=>setEditMov(m=>Object.assign({},m,{bloque:b,categoria:defCat(b,m.tipo)}))}
+                    style={{padding:"10px",borderRadius:10,
+                      border:`2px solid ${editMov.bloque===b?(b==="personal"?C.personal:C.accent):C.border}`,
+                      background:editMov.bloque===b?(b==="personal"?C.personalDim:C.accentDim):"transparent",
+                      color:editMov.bloque===b?(b==="personal"?C.personal:C.accent):C.muted,
+                      fontWeight:700,cursor:"pointer",fontSize:14}}>
+                    {b==="familiar"?"🏠 Familiar":"👤 Personal"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {/* Selector tipo */}
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              <label style={{color:C.muted,fontSize:12,fontWeight:600,letterSpacing:1}}>TIPO</label>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                {["gasto","ingreso"].map(t=>(
+                  <button key={t} onClick={()=>setEditMov(m=>Object.assign({},m,{tipo:t,categoria:defCat(m.bloque,t)}))}
+                    style={{padding:"10px",borderRadius:10,
+                      border:`2px solid ${editMov.tipo===t?(t==="ingreso"?C.accent:C.red):C.border}`,
+                      background:editMov.tipo===t?(t==="ingreso"?C.accentDim:C.redDim):"transparent",
+                      color:editMov.tipo===t?(t==="ingreso"?C.accent:C.red):C.muted,
+                      fontWeight:700,cursor:"pointer",fontSize:14}}>
+                    {t==="gasto"?"↑ Gasto":"↓ Ingreso"}
+                  </button>
+                ))}
+              </div>
+            </div>
             <Field label="IMPORTE (€)" type="number" value={String(editMov.importe)} onChange={v=>setEditMov(m=>Object.assign({},m,{importe:v}))} placeholder="0.00"/>
             <Field label="CATEGORIA" value={editMov.categoria} onChange={v=>setEditMov(m=>Object.assign({},m,{categoria:v}))} options={getCats(editMov.bloque,editMov.tipo)}/>
             <Field label="CONCEPTO" value={editMov.concepto||""} onChange={v=>setEditMov(m=>Object.assign({},m,{concepto:v}))} placeholder="Concepto"/>
