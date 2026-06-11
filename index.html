@@ -30,7 +30,7 @@
 <script type="text/babel">
 const {useState,useEffect,useRef,useCallback,useMemo}=React;
 
-const VERSION="v2.6";
+const VERSION="v2.7";
 const CLIENT_ID="343869806932-59pi5fq8micnj2rrlagmcl6c9dvrad5l.apps.googleusercontent.com";
 const API_KEY="AIzaSyAnX2AqSv_od3LYvT7n8WaCWL5T0WTmxZM";
 const SCOPES="https://www.googleapis.com/auth/drive.file";
@@ -418,10 +418,12 @@ function App(){
       const remote=await driveLoad(t);
       if(remote){
         const merged=migrateData(remote);
+        // Always update localStorage with Drive data (never the other way on connect)
         setData(merged);
         try{localStorage.setItem("fj_bak",JSON.stringify(merged));}catch(_){}
         notify(`✓ Drive: ${merged.movimientos?.length||0} registros`);
       }else{
+        // Only push localStorage to Drive if Drive has NO file at all
         const bak=localStorage.getItem("fj_bak");
         if(bak){const bd=migrateData(JSON.parse(bak));setData(bd);await driveSave(t,bd);notify("✓ Backup migrado a Drive");}
         else if(!silent)notify("✓ Conectado");
