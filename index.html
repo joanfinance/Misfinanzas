@@ -29,11 +29,12 @@
 <script type="text/babel" data-presets="react">
 const {useState, useEffect, useRef, useCallback, useMemo} = React;
 
-const VERSION = "v3.0";
+const VERSION = "v3.1";
 const CLIENT_ID = "343869806932-59pi5fq8micnj2rrlagmcl6c9dvrad5l.apps.googleusercontent.com";
 const API_KEY = "AIzaSyAnX2AqSv_od3LYvT7n8WaCWL5T0WTmxZM";
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
 const FILE_NAME = "finanzas_joan_familia.json";
+const BACKUP_NAME = "finanzas_joan_backup.json";
 
 const CAT_FAM = ["Supermercado","Vehiculo","Varios","Reparaciones casa","Hijos","Ocio familiar","Hipoteca","Suministros"];
 const CAT_PER = ["Ocio personal","Ropa","Gastos varios","Ahorro","Inversion"];
@@ -120,7 +121,36 @@ async function driveSave(tok, data) {
       ? `https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=multipart`
       : "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart";
     await fetch(url, {method: id?"PATCH":"POST", headers:{Authorization:`Bearer ${tok}`}, body:form});
+    // Auto backup after every save
+    driveBackup(tok, data);
   } catch(e) { console.error("driveSave error", e); }
+}
+async function driveBackup(tok, data) {
+  try {
+    const r = await fetch(`https://www.googleapis.com/drive/v3/files?q=name='${BACKUP_NAME}'&spaces=drive&fields=files(id)`, {headers:{Authorization:`Bearer ${tok}`}});
+    const d = await r.json();
+    const id = d.files && d.files[0] ? d.files[0].id : null;
+    const blob = new Blob([JSON.stringify(Object.assign({}, data, {backupDate:new Date().toISOString()}))], {type:"application/json"});
+    const meta = JSON.stringify({name:BACKUP_NAME, mimeType:"application/json"});
+    const form = new FormData();
+    form.append("metadata", new Blob([meta], {type:"application/json"}));
+    form.append("file", blob);
+    const url = id
+      ? `https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=multipart`
+      : "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart";
+    await fetch(url, {method: id?"PATCH":"POST", headers:{Authorization:`Bearer ${tok}`}, body:form});
+  } catch(e) { console.error("backup error", e); }
+}
+async function driveLoadBackup(tok) {
+  try {
+    const r = await fetch(`https://www.googleapis.com/drive/v3/files?q=name='${BACKUP_NAME}'&spaces=drive&fields=files(id)`, {headers:{Authorization:`Bearer ${tok}`}});
+    const d = await r.json();
+    const id = d.files && d.files[0] ? d.files[0].id : null;
+    if (!id) return null;
+    const resp = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`, {headers:{Authorization:`Bearer ${tok}`}});
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch(e) { return null; }
 }
 
 // UI Components
@@ -463,6 +493,7 @@ function App() {
   const [anio, setAnio] = useState(new Date().getFullYear());
   const [importTxt, setImportTxt] = useState("");
   const [importMsg, setImportMsg] = useState("");
+  const [restoring, setRestoring] = useState(false);
 
   const mkForm = (bl,ti) => ({fecha:today(),tipo:ti||"gasto",bloque:bl||"familiar",categoria:defCat(bl||"familiar",ti||"gasto"),concepto:"",importe:"",pago:"tarjeta",notas:"",esRec:false,diaMes:"1"});
   const [form, setForm] = useState(mkForm());
@@ -552,6 +583,18 @@ function App() {
   const delRec = async id => {
     await saveData(Object.assign({},data,{recurrentes:(data.recurrentes||[]).filter(r=>r.id!==id)}));
     setConfirmDelRec(null);
+  };
+
+  const restoreBackup = async () => {
+    const t = tokenRef.current;
+    if (!t) { notify("Conecta Drive primero"); return; }
+    setRestoring(true);
+    const bak = await driveLoadBackup(t);
+    if (!bak) { notify("No hay backup disponible"); setRestoring(false); return; }
+    const d = migrate(bak);
+    await saveData(d);
+    notify("✓ Backup restaurado: " + d.movimientos.length + " registros");
+    setRestoring(false);
   };
 
   const importData = async () => {
@@ -892,16 +935,24 @@ function App() {
               </div>
               <ResumenAnual movimientos={data.movimientos||[]} anio={anio}/>
             </Card>
-            <Card>
-              <div style={{fontSize:16,fontWeight:700,marginBottom:12}}>Exportar datos</div>
-              <div style={{color:C.muted,fontSize:14,marginBottom:16}}>Descarga todos los movimientos como CSV.</div>
-              <Btn onClick={exportCSV} variant="primary" style={{width:"100%"}}>📥 Exportar CSV</Btn>
-            </Card>
           </div>
         )}
 
         {tab==="ajustes" && (
           <div style={{display:"flex",flexDirection:"column",gap:16}}>
+            <Card style={{borderColor:C.accentDim}}>
+              <div style={{fontSize:14,fontWeight:700,marginBottom:8}}>💾 Backup automatico</div>
+              <div style={{color:C.muted,fontSize:13,marginBottom:4}}>Cada vez que guardas un registro se crea automaticamente <strong style={{color:C.text}}>finanzas_joan_backup.json</strong> en tu Drive.</div>
+              <div style={{color:C.muted,fontSize:13,marginBottom:14}}>Si el fichero principal se corrompe, restaura desde aqui.</div>
+              <Btn variant="primary" style={{width:"100%"}} disabled={restoring} onClick={restoreBackup}>
+                {restoring?"Restaurando...":"↩ Restaurar desde backup"}
+              </Btn>
+            </Card>
+            <Card>
+              <div style={{fontSize:14,fontWeight:700,marginBottom:8}}>📥 Exportar CSV</div>
+              <div style={{color:C.muted,fontSize:13,marginBottom:14}}>Descarga todos los movimientos como CSV compatible con Excel.</div>
+              <Btn onClick={exportCSV} variant="primary" style={{width:"100%"}}>📥 Exportar CSV</Btn>
+            </Card>
             <Card style={{borderColor:C.orange}}>
               <div style={{fontSize:14,fontWeight:700,marginBottom:8}}>🔄 Resetear cache</div>
               <div style={{color:C.muted,fontSize:13,marginBottom:14}}>Borra el cache local y fuerza recarga desde Drive.</div>
