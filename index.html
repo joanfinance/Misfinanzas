@@ -29,7 +29,7 @@
 <script type="text/babel" data-presets="react">
 const {useState, useEffect, useRef, useCallback, useMemo} = React;
 
-const VERSION = "v3.1";
+const VERSION = "v3.2";
 const CLIENT_ID = "343869806932-59pi5fq8micnj2rrlagmcl6c9dvrad5l.apps.googleusercontent.com";
 const API_KEY = "AIzaSyAnX2AqSv_od3LYvT7n8WaCWL5T0WTmxZM";
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
@@ -917,9 +917,14 @@ function App() {
                 <SwitchField label="🔁 Pago recurrente" sub="Aparecera cada mes para confirmar" checked={form.esRec} onChange={v=>setForm(f=>Object.assign({},f,{esRec:v}))}/>
                 {form.esRec&&<Field label="DIA DEL MES" type="number" value={form.diaMes} onChange={v=>setForm(f=>Object.assign({},f,{diaMes:v}))} placeholder="1-31"/>}
               </div>
-              <Btn onClick={addMov} variant={form.bloque==="personal"?"personal":"primary"} disabled={saving} style={{width:"100%",marginTop:20}}>
-                {saving?"Guardando...":"Guardar movimiento"}
-              </Btn>
+              <button onClick={saving?undefined:addMov} style={{width:"100%",marginTop:20,border:"none",borderRadius:10,
+                fontWeight:700,fontSize:15,padding:"12px 22px",cursor:saving?"not-allowed":"pointer",
+                transition:"all .3s",
+                background:saving?"#2a2a3a":form.bloque==="personal"?C.personal:C.accent,
+                color:saving?C.muted:"#0f0f13",
+                opacity:saving?0.7:1}}>
+                {saving?"⏳ Guardando...":"Guardar movimiento"}
+              </button>
             </Card>
           </div>
         )}
@@ -940,6 +945,7 @@ function App() {
 
         {tab==="ajustes" && (
           <div style={{display:"flex",flexDirection:"column",gap:16}}>
+            <Presupuestos presupuestos={data.presupuestos||{}} gastosMes={gastosMes} onSave={savePres}/>
             <Card style={{borderColor:C.accentDim}}>
               <div style={{fontSize:14,fontWeight:700,marginBottom:8}}>💾 Backup automatico</div>
               <div style={{color:C.muted,fontSize:13,marginBottom:4}}>Cada vez que guardas un registro se crea automaticamente <strong style={{color:C.text}}>finanzas_joan_backup.json</strong> en tu Drive.</div>
