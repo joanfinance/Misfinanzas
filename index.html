@@ -29,7 +29,7 @@
 <script type="text/babel" data-presets="react">
 const {useState, useEffect, useRef, useCallback, useMemo} = React;
 
-const VERSION = "v3.4";
+const VERSION = "v3.5";
 const CLIENT_ID = "343869806932-59pi5fq8micnj2rrlagmcl6c9dvrad5l.apps.googleusercontent.com";
 const API_KEY = "AIzaSyAnX2AqSv_od3LYvT7n8WaCWL5T0WTmxZM";
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
@@ -205,7 +205,7 @@ function Field({label, value, onChange, type, options, placeholder, autoFocus, m
 function PBar({value, max, color, alert}) {
   color = color||C.accent;
   const pct = max ? Math.min(100, Math.abs(value)/Math.abs(max)*100) : 0;
-  const col = alert && pct>=100 ? C.red : alert && pct>=80 ? C.orange : color;
+  const col = alert && pct>100 ? C.red : alert && pct>=80 ? C.orange : color;
   return (
     <div style={{background:C.border,borderRadius:4,height:6,overflow:"hidden"}}>
       <div style={{width:`${pct}%`,background:col,height:"100%",borderRadius:4,transition:"width .4s"}}/>
@@ -401,13 +401,13 @@ function Presupuestos({presupuestos, gastosMes, onSave}) {
       {todas.filter(cat=>presupuestos[cat]).map(cat => {
         const pres=presupuestos[cat], gasto=gastosMes[cat]||0;
         const pct=Math.min(100,(gasto/pres)*100);
-        const alerta=pct>=100?C.red:pct>=80?C.orange:C.accent;
+        const alerta=pct>100?C.red:C.accent;
         return (
           <div key={cat} style={{marginBottom:12}}>
             <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
               <span style={{fontSize:13}}>{cat}</span>
               <span style={{fontSize:12,fontFamily:"'DM Mono',monospace",color:alerta}}>
-                {fmt(gasto)} / {fmt(pres)}{pct>=100?" ⚠️":pct>=80?" ⚡":""}
+                {fmt(gasto)} / {fmt(pres)}{pct>100?" ⚠️":""}
               </span>
             </div>
             <PBar value={gasto} max={pres} color={C.accent} alert={true}/>
@@ -724,7 +724,7 @@ function App() {
 
   const alertasPres = useMemo(() => {
     const pres = data.presupuestos||{};
-    return Object.entries(pres).filter(([cat,lim])=>(gastosMes[cat]||0)>=lim*0.8).map(([cat,lim])=>({cat,lim,gasto:gastosMes[cat]||0,sup:(gastosMes[cat]||0)>=lim}));
+    return Object.entries(pres).filter(([cat,lim])=>(gastosMes[cat]||0)>lim).map(([cat,lim])=>({cat,lim,gasto:gastosMes[cat]||0}));
   }, [data.presupuestos, gastosMes]);
 
   const prevMes = () => setMes(p=>p.m===0?{y:p.y-1,m:11}:{y:p.y,m:p.m-1});
@@ -791,10 +791,10 @@ function App() {
 
         {tab==="dashboard" && (
           <div style={{display:"flex",flexDirection:"column",gap:16}}>
-            {alertasPres.length>0 && alertasPres.map(({cat,lim,gasto,sup}) => (
-              <div key={cat} style={{background:sup?C.redDim:C.orangeDim,border:`1px solid ${sup?C.red:C.orange}`,borderRadius:10,padding:"10px 14px"}}>
-                <div style={{color:sup?C.red:C.orange,fontWeight:700,fontSize:13}}>{sup?"⚠️ Superado":"⚡ Cerca del limite"} — {cat}</div>
-                <div style={{color:C.muted,fontSize:11,marginTop:2}}>{fmt(gasto)} de {fmt(lim)}</div>
+            {alertasPres.length>0 && alertasPres.map(({cat,lim,gasto}) => (
+              <div key={cat} style={{background:C.redDim,border:`1px solid ${C.red}`,borderRadius:10,padding:"10px 14px"}}>
+                <div style={{color:C.red,fontWeight:700,fontSize:13}}>⚠️ Presupuesto superado — {cat}</div>
+                <div style={{color:C.muted,fontSize:11,marginTop:2}}>{fmt(gasto)} de {fmt(lim)} (+{fmt(gasto-lim)})</div>
               </div>
             ))}
             {pendientes.length>0 && (
