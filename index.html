@@ -29,7 +29,7 @@
 <script type="text/babel" data-presets="react">
 const {useState, useEffect, useRef, useCallback, useMemo} = React;
 
-const VERSION = "v3.2";
+const VERSION = "v3.3";
 const CLIENT_ID = "343869806932-59pi5fq8micnj2rrlagmcl6c9dvrad5l.apps.googleusercontent.com";
 const API_KEY = "AIzaSyAnX2AqSv_od3LYvT7n8WaCWL5T0WTmxZM";
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
@@ -420,20 +420,35 @@ function Presupuestos({presupuestos, gastosMes, onSave}) {
 
 function ResumenAnual({movimientos, anio}) {
   const [bloque, setBloque] = useState("familiar");
+  const [vista, setVista] = useState("resumen");
+  const [catSel, setCatSel] = useState(null);
   const color = bloque==="familiar" ? C.accent : C.personal;
+  const cats = bloque==="familiar" ? CAT_FAM : CAT_PER;
+
   const filas = useMemo(() => MESES.map((mes,mi) => {
     const movs = movimientos.filter(m => { const d=new Date(m.fecha); return d.getFullYear()===anio&&d.getMonth()===mi&&m.bloque===bloque; });
     const ing = movs.filter(m=>m.tipo==="ingreso").reduce((a,m)=>a+m.importe,0);
     const gas = movs.filter(m=>m.tipo==="gasto").reduce((a,m)=>a+m.importe,0);
     return {mes:mes.slice(0,3), ing, gas, sal:ing-gas, hay:ing>0||gas>0};
   }), [movimientos, anio, bloque]);
+
+  const catFilas = useMemo(() => {
+    if (!catSel) return [];
+    return MESES.map((mes,mi) => {
+      const movs = movimientos.filter(m => { const d=new Date(m.fecha); return d.getFullYear()===anio&&d.getMonth()===mi&&m.bloque===bloque&&m.categoria===catSel&&m.tipo==="gasto"; });
+      return {mes:mes.slice(0,3), gas:movs.reduce((a,m)=>a+m.importe,0)};
+    });
+  }, [movimientos, anio, bloque, catSel]);
+
   const tot = filas.reduce((a,f)=>({ing:a.ing+f.ing,gas:a.gas+f.gas,sal:a.sal+f.sal}),{ing:0,gas:0,sal:0});
+  const catMax = catSel ? Math.max(...catFilas.map(f=>f.gas),1) : 1;
+  const catTotal = catFilas.reduce((a,f)=>a+f.gas,0);
 
   return (
     <div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
         {[["familiar","🏠 Familiar"],["personal","👤 Personal"]].map(([b,label]) => (
-          <button key={b} onClick={()=>setBloque(b)} style={{padding:"9px",borderRadius:8,
+          <button key={b} onClick={()=>{setBloque(b);setCatSel(null);}} style={{padding:"9px",borderRadius:8,
             border:`2px solid ${bloque===b?(b==="personal"?C.personal:C.accent):C.border}`,
             background:bloque===b?(b==="personal"?C.personalDim:C.accentDim):"transparent",
             color:bloque===b?(b==="personal"?C.personal:C.accent):C.muted,
@@ -442,36 +457,87 @@ function ResumenAnual({movimientos, anio}) {
           </button>
         ))}
       </div>
-      <div style={{overflowX:"auto"}}>
-        <table style={{width:"100%",borderCollapse:"collapse"}}>
-          <thead>
-            <tr>
-              <th style={{color:C.muted,fontWeight:600,padding:"5px 3px",borderBottom:`1px solid ${C.border}`,textAlign:"left",fontSize:12}}>Mes</th>
-              <th style={{color:color,fontWeight:600,padding:"5px 3px",borderBottom:`1px solid ${C.border}`,textAlign:"right",fontSize:12}}>Ingresos</th>
-              <th style={{color:C.red,fontWeight:600,padding:"5px 3px",borderBottom:`1px solid ${C.border}`,textAlign:"right",fontSize:12}}>Gastos</th>
-              <th style={{color:C.yellow,fontWeight:600,padding:"5px 3px",borderBottom:`1px solid ${C.border}`,textAlign:"right",fontSize:12}}>Saldo</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filas.map(f => (
-              <tr key={f.mes}>
-                <td style={{padding:"5px 3px",color:C.muted,fontWeight:600,fontSize:12}}>{f.mes}</td>
-                <td style={{padding:"5px 3px",textAlign:"right",color:color,fontFamily:"'DM Mono',monospace",fontSize:12}}>{f.ing>0?fmt(f.ing):"—"}</td>
-                <td style={{padding:"5px 3px",textAlign:"right",color:C.red,fontFamily:"'DM Mono',monospace",fontSize:12}}>{f.gas>0?fmt(f.gas):"—"}</td>
-                <td style={{padding:"5px 3px",textAlign:"right",color:f.sal>=0?color:C.red,fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:12}}>{f.hay?fmt(f.sal):"—"}</td>
-              </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr style={{borderTop:`2px solid ${C.border}`}}>
-              <td style={{padding:"6px 3px",fontWeight:700,fontSize:12}}>Total</td>
-              <td style={{padding:"6px 3px",textAlign:"right",color,fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:12}}>{fmt(tot.ing)}</td>
-              <td style={{padding:"6px 3px",textAlign:"right",color:C.red,fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:12}}>{fmt(tot.gas)}</td>
-              <td style={{padding:"6px 3px",textAlign:"right",color:tot.sal>=0?color:C.red,fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:12}}>{fmt(tot.sal)}</td>
-            </tr>
-          </tfoot>
-        </table>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+        {[["resumen","📊 Resumen"],["categorias","🏷 Categorias"]].map(([v,label]) => (
+          <button key={v} onClick={()=>{setVista(v);if(v==="resumen")setCatSel(null);}} style={{padding:"8px",borderRadius:8,
+            border:`1.5px solid ${vista===v?C.yellow:C.border}`,
+            background:vista===v?C.yellow+"22":"transparent",
+            color:vista===v?C.yellow:C.muted,
+            fontWeight:600,cursor:"pointer",fontSize:12}}>
+            {label}
+          </button>
+        ))}
       </div>
+
+      {vista==="resumen" && (
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse"}}>
+            <thead>
+              <tr>
+                <th style={{color:C.muted,fontWeight:600,padding:"5px 3px",borderBottom:`1px solid ${C.border}`,textAlign:"left",fontSize:12}}>Mes</th>
+                <th style={{color:color,fontWeight:600,padding:"5px 3px",borderBottom:`1px solid ${C.border}`,textAlign:"right",fontSize:12}}>Ingresos</th>
+                <th style={{color:C.red,fontWeight:600,padding:"5px 3px",borderBottom:`1px solid ${C.border}`,textAlign:"right",fontSize:12}}>Gastos</th>
+                <th style={{color:C.yellow,fontWeight:600,padding:"5px 3px",borderBottom:`1px solid ${C.border}`,textAlign:"right",fontSize:12}}>Saldo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filas.map(f => (
+                <tr key={f.mes}>
+                  <td style={{padding:"5px 3px",color:C.muted,fontWeight:600,fontSize:12}}>{f.mes}</td>
+                  <td style={{padding:"5px 3px",textAlign:"right",color:color,fontFamily:"'DM Mono',monospace",fontSize:12}}>{f.ing>0?fmt(f.ing):"—"}</td>
+                  <td style={{padding:"5px 3px",textAlign:"right",color:C.red,fontFamily:"'DM Mono',monospace",fontSize:12}}>{f.gas>0?fmt(f.gas):"—"}</td>
+                  <td style={{padding:"5px 3px",textAlign:"right",color:f.sal>=0?color:C.red,fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:12}}>{f.hay?fmt(f.sal):"—"}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr style={{borderTop:`2px solid ${C.border}`}}>
+                <td style={{padding:"6px 3px",fontWeight:700,fontSize:12}}>Total</td>
+                <td style={{padding:"6px 3px",textAlign:"right",color,fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:12}}>{fmt(tot.ing)}</td>
+                <td style={{padding:"6px 3px",textAlign:"right",color:C.red,fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:12}}>{fmt(tot.gas)}</td>
+                <td style={{padding:"6px 3px",textAlign:"right",color:tot.sal>=0?color:C.red,fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:12}}>{fmt(tot.sal)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+
+      {vista==="categorias" && (
+        <div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>
+            {cats.map(cat => (
+              <button key={cat} onClick={()=>setCatSel(cat===catSel?null:cat)} style={{padding:"5px 10px",borderRadius:20,
+                border:`1.5px solid ${catSel===cat?color:C.border}`,
+                background:catSel===cat?color+"22":"transparent",
+                color:catSel===cat?color:C.muted,
+                cursor:"pointer",fontSize:12,fontWeight:600}}>
+                {cat}
+              </button>
+            ))}
+          </div>
+          {!catSel && <div style={{color:C.muted,fontSize:14,textAlign:"center",padding:20}}>Selecciona una categoria</div>}
+          {catSel && (
+            <div>
+              <div style={{fontSize:13,fontWeight:700,color,marginBottom:12}}>{catSel} — {anio}</div>
+              {catFilas.map((f,i) => (
+                <div key={i} style={{marginBottom:10}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                    <span style={{fontSize:13,color:C.muted}}>{f.mes}</span>
+                    <span style={{fontFamily:"'DM Mono',monospace",color:f.gas>0?C.red:C.muted,fontSize:13,fontWeight:f.gas>0?700:400}}>
+                      {f.gas>0?fmt(f.gas):"—"}
+                    </span>
+                  </div>
+                  {f.gas>0&&<PBar value={f.gas} max={catMax} color={color}/>}
+                </div>
+              ))}
+              <div style={{borderTop:`2px solid ${C.border}`,marginTop:10,paddingTop:10,display:"flex",justifyContent:"space-between"}}>
+                <span style={{fontSize:13,fontWeight:700}}>Total anual</span>
+                <span style={{fontFamily:"'DM Mono',monospace",color:C.red,fontWeight:700,fontSize:14}}>{fmt(catTotal)}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -749,7 +815,6 @@ function App() {
               <div style={{fontSize:12,color:C.muted,marginBottom:12,letterSpacing:1}}>GASTO ULTIMOS 6 MESES</div>
               <BarChart data={last6} color={C.accent}/>
             </Card>
-            <Presupuestos presupuestos={data.presupuestos||{}} gastosMes={gastosMes} onSave={savePres}/>
             {catF.length>0 && (
               <Card>
                 <div style={{fontSize:12,color:C.muted,marginBottom:12,letterSpacing:1}}>TOP GASTOS FAMILIAR</div>
@@ -856,6 +921,7 @@ function App() {
                     <div style={{display:"flex",gap:8}}>
                       <Btn small={true} variant="orange" onClick={()=>confirmRec(rec,null)} style={{flex:1}}>✓ Confirmar</Btn>
                       <Btn small={true} variant="ghost" onClick={()=>setEditRec({id:rec.id,importe:String(rec.importe)})}>✏ Editar</Btn>
+                      <button onClick={()=>setConfirmDelRec(rec)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:8,color:C.muted,cursor:"pointer",fontSize:14,padding:"7px 10px"}}>🗑️</button>
                     </div>
                   )}
                 </div>
