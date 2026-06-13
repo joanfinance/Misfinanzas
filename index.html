@@ -563,6 +563,7 @@ function App() {
   const [importTxt, setImportTxt] = useState("");
   const [importMsg, setImportMsg] = useState("");
   const [restoring, setRestoring] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   const mkForm = (bl,ti) => ({fecha:today(),tipo:ti||"gasto",bloque:bl||"familiar",categoria:defCat(bl||"familiar",ti||"gasto"),concepto:"",importe:"",pago:"tarjeta",notas:"",esRec:false,diaMes:"1"});
   const [form, setForm] = useState(mkForm());
