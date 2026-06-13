@@ -568,11 +568,13 @@ function App() {
 
   const importeRef = useRef(null);
 
+  const mkForm = (bl,ti) => ({fecha:today(),tipo:ti||"gasto",bloque:bl||"familiar",categoria:defCat(bl||"familiar",ti||"gasto"),concepto:"",importe:"",pago:"tarjeta",notas:"",esRec:false,diaMes:"1"});
+
   const goToNuevo = () => {
     setTab("nuevo");
-    // Focus importe field directly from user gesture for iOS Safari
     setTimeout(() => { if (importeRef.current) importeRef.current.focus(); }, 50);
   };
+
   const [form, setForm] = useState(mkForm());
 
   const notify = useCallback(m => { setMsg(m); setTimeout(()=>setMsg(""),3000); }, []);
