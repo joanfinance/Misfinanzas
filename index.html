@@ -29,7 +29,7 @@
 <script type="text/babel" data-presets="react">
 const {useState, useEffect, useRef, useCallback, useMemo} = React;
 
-const VERSION = "v3.3";
+const VERSION = "v3.4";
 const CLIENT_ID = "343869806932-59pi5fq8micnj2rrlagmcl6c9dvrad5l.apps.googleusercontent.com";
 const API_KEY = "AIzaSyAnX2AqSv_od3LYvT7n8WaCWL5T0WTmxZM";
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
@@ -554,8 +554,11 @@ function App() {
   const [confirmDel, setConfirmDel] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [editMov, setEditMov] = useState(null);
+  const [editSaving, setEditSaving] = useState(false);
   const [confirmDelRec, setConfirmDelRec] = useState(null);
+  const [deletingRec, setDeletingRec] = useState(false);
   const [editRec, setEditRec] = useState(null);
+  const [confirmingRec, setConfirmingRec] = useState(false);
   const [anio, setAnio] = useState(new Date().getFullYear());
   const [importTxt, setImportTxt] = useState("");
   const [importMsg, setImportMsg] = useState("");
@@ -624,9 +627,11 @@ function App() {
   };
 
   const saveEdit = async () => {
-    if (!editMov) return;
+    if (!editMov || editSaving) return;
+    setEditSaving(true);
     const mov = Object.assign({}, editMov, {importe:toFloat(editMov.importe)});
     await saveData(Object.assign({},data,{movimientos:(data.movimientos||[]).map(m=>m.id===mov.id?mov:m)}));
+    setEditSaving(false);
     setEditMov(null);
   };
 
@@ -637,17 +642,22 @@ function App() {
   };
 
   const confirmRec = async (rec, impOver) => {
+    if (confirmingRec) return;
+    setConfirmingRec(true);
     const {y,m} = mes;
     const imp = impOver ? toFloat(impOver) : rec.importe;
     const dia = String(rec.dia).padStart(2,"0"), mo = String(m+1).padStart(2,"0");
     const mov = {id:Date.now(),fecha:`${y}-${mo}-${dia}`,tipo:rec.tipo,bloque:rec.bloque,categoria:rec.categoria,concepto:rec.concepto,importe:imp,pago:rec.pago,notas:"",recurrenteId:rec.id};
     const conf = Object.assign({}, data.confirmados||{}, {[rKey(rec.id,y,m)]:true});
     await saveData(Object.assign({},data,{movimientos:[mov,...(data.movimientos||[])],confirmados:conf}));
+    setConfirmingRec(false);
     setEditRec(null);
   };
 
   const delRec = async id => {
+    setDeletingRec(true);
     await saveData(Object.assign({},data,{recurrentes:(data.recurrentes||[]).filter(r=>r.id!==id)}));
+    setDeletingRec(false);
     setConfirmDelRec(null);
   };
 
@@ -665,14 +675,16 @@ function App() {
 
   const importData = async () => {
     try {
+      setImporting(true);
       const parsed = JSON.parse(importTxt);
-      if (!parsed.movimientos || !Array.isArray(parsed.movimientos)) { setImportMsg("❌ JSON invalido"); return; }
+      if (!parsed.movimientos || !Array.isArray(parsed.movimientos)) { setImportMsg("❌ JSON invalido"); setImporting(false); return; }
       const d = migrate(parsed);
       await saveData(d);
       setImportTxt("");
       setImportMsg("✓ Importados " + d.movimientos.length + " registros");
       setTimeout(()=>setImportMsg(""),4000);
     } catch(e) { setImportMsg("❌ Error: "+e.message); }
+    finally { setImporting(false); }
   };
 
   const exportCSV = () => {
@@ -914,12 +926,12 @@ function App() {
                     <div style={{display:"flex",gap:8,alignItems:"center"}}>
                       <input value={editRec.importe} onChange={e=>setEditRec(r=>Object.assign({},r,{importe:e.target.value}))} inputMode="decimal"
                         style={{flex:1,background:C.surface,border:`1px solid ${C.orange}`,borderRadius:8,color:C.text,padding:"8px 10px",fontSize:15}}/>
-                      <Btn small={true} variant="orange" onClick={()=>confirmRec(rec,editRec.importe)}>✓</Btn>
+                      <Btn small={true} variant="orange" disabled={confirmingRec} onClick={()=>confirmRec(rec,editRec.importe)}>{confirmingRec?"...":"✓"}</Btn>
                       <Btn small={true} variant="ghost" onClick={()=>setEditRec(null)}>✕</Btn>
                     </div>
                   ) : (
                     <div style={{display:"flex",gap:8}}>
-                      <Btn small={true} variant="orange" onClick={()=>confirmRec(rec,null)} style={{flex:1}}>✓ Confirmar</Btn>
+                      <Btn small={true} variant="orange" disabled={confirmingRec} onClick={()=>confirmRec(rec,null)} style={{flex:1}}>{confirmingRec?"⏳ Confirmando...":"✓ Confirmar"}</Btn>
                       <Btn small={true} variant="ghost" onClick={()=>setEditRec({id:rec.id,importe:String(rec.importe)})}>✏ Editar</Btn>
                       <button onClick={()=>setConfirmDelRec(rec)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:8,color:C.muted,cursor:"pointer",fontSize:14,padding:"7px 10px"}}>🗑️</button>
                     </div>
@@ -1041,7 +1053,7 @@ function App() {
               <textarea value={importTxt} onChange={e=>setImportTxt(e.target.value)} placeholder="Pega aqui el JSON..." rows={4}
                 style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"10px 12px",fontSize:12,resize:"vertical",marginBottom:10}}/>
               {importMsg&&<div style={{fontSize:13,color:importMsg.startsWith("✓")?C.accent:C.red,marginBottom:10}}>{importMsg}</div>}
-              <Btn variant="personal" style={{width:"100%"}} disabled={!importTxt.trim()} onClick={importData}>📥 Importar y guardar en Drive</Btn>
+              <Btn variant="personal" style={{width:"100%"}} disabled={!importTxt.trim()||importing} onClick={importData}>{importing?"⏳ Importando...":"📥 Importar y guardar en Drive"}</Btn>
             </Card>
           </div>
         )}
@@ -1105,8 +1117,8 @@ function App() {
             {editMov.bloque==="familiar"&&editMov.tipo==="gasto"&&<PagoToggle value={editMov.pago||"tarjeta"} onChange={v=>setEditMov(m=>Object.assign({},m,{pago:v}))}/>}
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:20}}>
-            <Btn variant="ghost" onClick={()=>setEditMov(null)}>Cancelar</Btn>
-            <Btn variant="primary" onClick={saveEdit}>Guardar</Btn>
+            <Btn variant="ghost" onClick={()=>setEditMov(null)} disabled={editSaving}>Cancelar</Btn>
+            <Btn variant="primary" onClick={saveEdit} disabled={editSaving}>{editSaving?"⏳ Guardando...":"Guardar"}</Btn>
           </div>
         </Modal>
       )}
@@ -1118,8 +1130,8 @@ function App() {
           <div style={{fontSize:22,fontWeight:700,color:C.red,fontFamily:"'DM Mono',monospace",marginBottom:12}}>{fmt(confirmDelRec.importe)}</div>
           <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Se eliminara de todos los meses futuros.</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-            <Btn variant="ghost" onClick={()=>setConfirmDelRec(null)}>Cancelar</Btn>
-            <Btn variant="danger" onClick={()=>delRec(confirmDelRec.id)}>Si, borrar</Btn>
+            <Btn variant="ghost" onClick={()=>setConfirmDelRec(null)} disabled={deletingRec}>Cancelar</Btn>
+            <Btn variant="danger" onClick={()=>delRec(confirmDelRec.id)} disabled={deletingRec}>{deletingRec?"⏳ Borrando...":"Si, borrar"}</Btn>
           </div>
         </Modal>
       )}
