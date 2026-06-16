@@ -29,7 +29,7 @@
 <script type="text/babel" data-presets="react">
 const {useState, useEffect, useRef, useCallback, useMemo} = React;
 
-const VERSION = "v3.7";
+const VERSION = "v3.9";
 const CLIENT_ID = "343869806932-59pi5fq8micnj2rrlagmcl6c9dvrad5l.apps.googleusercontent.com";
 const API_KEY = "AIzaSyAnX2AqSv_od3LYvT7n8WaCWL5T0WTmxZM";
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
@@ -612,7 +612,39 @@ function App() {
     } finally { setSyncing(false); }
   }, [notify]);
 
-  useEffect(() => { if (localStorage.getItem("fj_drv")==="1") connect(true); }, []);
+  useEffect(() => {
+    const autoConnect = async () => {
+      if (localStorage.getItem("fj_drv")==="1") {
+        setSyncing(true);
+        try {
+          // Try silent auth first
+          let t = await driveSignIn(true).catch(() => null);
+          
+          // If silent fails, try with consent (user already authorized before)
+          if (!t) {
+            t = await driveSignIn(false).catch(() => null);
+          }
+          
+          if (t) {
+            tokenRef.current = t;
+            setToken(t);
+            const remote = await driveLoad(t);
+            if (remote) {
+              const d = migrate(remote);
+              setData(d);
+              try { localStorage.setItem("fj_bak", JSON.stringify(d)); } catch(e) {}
+            }
+          }
+        } catch(e) {
+          const bak = localStorage.getItem("fj_bak");
+          if (bak) try { setData(migrate(JSON.parse(bak))); } catch(e2) {}
+        } finally {
+          setSyncing(false);
+        }
+      }
+    };
+    autoConnect();
+  }, []);
 
   const addMov = async () => {
     if (!form.categoria || !form.importe || saving) return;
@@ -787,10 +819,10 @@ function App() {
 
       <div style={{display:"flex",borderBottom:`1px solid ${C.border}`}}>
         {TABS.map(([t,icon]) => (
-          <button key={t} onClick={()=>setTab(t)} style={{flex:1,background:"none",border:"none",
+          <button key={t} onClick={()=>{if(t==="nuevo"&&!token){notify("Conecta Drive primero");return;}setTab(t);}} disabled={t==="nuevo"&&!token} style={{flex:1,background:"none",border:"none",
             borderBottom:tab===t?`2px solid ${t==="personal"?C.personal:t==="recurrentes"?C.orange:C.accent}`:"2px solid transparent",
             color:tab===t?(t==="personal"?C.personal:t==="recurrentes"?C.orange:C.accent):C.muted,
-            padding:"13px 0",fontSize:17,cursor:"pointer"}}>
+            padding:"13px 0",fontSize:17,cursor:t==="nuevo"&&!token?"not-allowed":"pointer",opacity:t==="nuevo"&&!token?0.4:1}}>
             {icon}
           </button>
         ))}
@@ -1146,7 +1178,7 @@ function App() {
         </Modal>
       )}
 
-      {tab!=="nuevo" && <button onClick={goToNuevo} style={{position:"fixed",bottom:80,right:20,width:56,height:56,borderRadius:"50%",background:C.accent,border:"none",fontSize:26,cursor:"pointer",boxShadow:`0 4px 24px ${C.accent}66`,color:"#0f0f13",fontWeight:700,zIndex:100}}>
+      {tab!=="nuevo" && token && <button onClick={goToNuevo} style={{position:"fixed",bottom:80,right:20,width:56,height:56,borderRadius:"50%",background:C.accent,border:"none",fontSize:26,cursor:"pointer",boxShadow:`0 4px 24px ${C.accent}66`,color:"#0f0f13",fontWeight:700,zIndex:100}}>
         +
       </button>}
     </div>
