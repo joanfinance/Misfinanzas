@@ -29,7 +29,7 @@
 <script type="text/babel" data-presets="react">
 const {useState, useEffect, useRef, useCallback, useMemo} = React;
 
-const VERSION = "v4.3";
+const VERSION = "v4.4";
 const CLIENT_ID = "343869806932-59pi5fq8micnj2rrlagmcl6c9dvrad5l.apps.googleusercontent.com";
 const API_KEY = "AIzaSyAnX2AqSv_od3LYvT7n8WaCWL5T0WTmxZM";
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
@@ -668,8 +668,7 @@ function App() {
     const mov = {id:Date.now(),fecha:form.fecha,tipo:form.tipo,bloque:form.bloque,categoria:form.categoria,concepto:form.concepto,importe:imp,pago:form.pago,notas:form.notas};
     let nd = Object.assign({}, data, {movimientos:[mov,...(data.movimientos||[])]});
     if (form.esRec) {
-      const rec = {id:Date.now()+1,concepto:form.concepto,categoria:form.categoria,bloque:form.bloque,tipo:form.tipo,importe:imp,dia:form.diaMes||"1",pago:form.pago};
-      // Only mark current month as confirmed (so it appears as pending next time)
+      const rec = {id:Date.now()+1,concepto:form.concepto,categoria:form.categoria,bloque:form.bloque,tipo:form.tipo,importe:imp,dia:form.diaMes||"1",pago:form.pago,desdeAño:mes.y,desdeMes:mes.m};
       const conf = Object.assign({}, nd.confirmados||{}, {[rKey(rec.id,mes.y,mes.m)]:true});
       nd = Object.assign({}, nd, {recurrentes:[...(nd.recurrentes||[]),rec], confirmados:conf});
     }
@@ -767,7 +766,11 @@ function App() {
     const gm = {}; movsMes.filter(mv=>mv.tipo==="gasto").forEach(mv=>{gm[mv.categoria]=(gm[mv.categoria]||0)+mv.importe;});
     const fI=sum(movsMes,"familiar","ingreso"), fG=sum(movsMes,"familiar","gasto");
     const pI=sum(movsMes,"personal","ingreso"), pG=sum(movsMes,"personal","gasto");
-    const pends = (data.recurrentes||[]).filter(r=>!conf[rKey(r.id,y,m)]);
+    const pends = (data.recurrentes||[]).filter(r=>{
+      // Only show if we're in or after the "desde" date
+      const isActive = (r.desdeAño < y) || (r.desdeAño === y && r.desdeMes <= m);
+      return isActive && !conf[rKey(r.id,y,m)];
+    });
     const pm = m===0?{y:y-1,m:11}:{y,m:m-1};
     const prev = movs.filter(mv=>{const d=new Date(mv.fecha);return d.getFullYear()===pm.y&&d.getMonth()===pm.m;});
     const prevG = sum(prev,"familiar","gasto")+sum(prev,"personal","gasto");
@@ -999,8 +1002,14 @@ function App() {
             </Card>
             <Card>
               <div style={{fontSize:12,color:C.muted,letterSpacing:1,marginBottom:12}}>PAGOS FIJOS</div>
-              {(data.recurrentes||[]).length===0 && <div style={{color:C.muted,fontSize:14}}>Sin pagos fijos configurados</div>}
-              {(data.recurrentes||[]).map(rec => {
+              {(data.recurrentes||[]).filter(rec => {
+                const isActive = (!rec.desdeAño && !rec.desdeMes) || (rec.desdeAño < mes.y) || (rec.desdeAño === mes.y && rec.desdeMes <= mes.m);
+                return isActive;
+              }).length===0 && <div style={{color:C.muted,fontSize:14}}>Sin pagos fijos configurados</div>}
+              {(data.recurrentes||[]).filter(rec => {
+                const isActive = (!rec.desdeAño && !rec.desdeMes) || (rec.desdeAño < mes.y) || (rec.desdeAño === mes.y && rec.desdeMes <= mes.m);
+                return isActive;
+              }).map(rec => {
                 const conf = (data.confirmados||{})[rKey(rec.id,mes.y,mes.m)];
                 return (
                   <div key={rec.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
