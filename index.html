@@ -29,7 +29,7 @@
 <script type="text/babel" data-presets="react">
 const {useState, useEffect, useRef, useCallback, useMemo} = React;
 
-const VERSION = "v4.1";
+const VERSION = "v4.2";
 const CLIENT_ID = "343869806932-59pi5fq8micnj2rrlagmcl6c9dvrad5l.apps.googleusercontent.com";
 const API_KEY = "AIzaSyAnX2AqSv_od3LYvT7n8WaCWL5T0WTmxZM";
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
@@ -669,7 +669,12 @@ function App() {
     let nd = Object.assign({}, data, {movimientos:[mov,...(data.movimientos||[])]});
     if (form.esRec) {
       const rec = {id:Date.now()+1,concepto:form.concepto,categoria:form.categoria,bloque:form.bloque,tipo:form.tipo,importe:imp,dia:form.diaMes||"1",pago:form.pago};
-      const conf = Object.assign({}, nd.confirmados||{}, {[rKey(rec.id,mes.y,mes.m)]:true});
+      // Mark as confirmed only for months AFTER the current one
+      const conf = Object.assign({}, nd.confirmados||{});
+      // Loop through all months up to and including current month
+      for (let m = 0; m <= mes.m; m++) {
+        conf[rKey(rec.id, mes.y, m)] = true;
+      }
       nd = Object.assign({}, nd, {recurrentes:[...(nd.recurrentes||[]),rec], confirmados:conf});
     }
     await saveData(nd);
