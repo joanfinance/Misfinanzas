@@ -29,7 +29,7 @@
 <script type="text/babel" data-presets="react">
 const {useState, useEffect, useRef, useCallback, useMemo} = React;
 
-const VERSION = "v3.9";
+const VERSION = "v4.0";
 const CLIENT_ID = "343869806932-59pi5fq8micnj2rrlagmcl6c9dvrad5l.apps.googleusercontent.com";
 const API_KEY = "AIzaSyAnX2AqSv_od3LYvT7n8WaCWL5T0WTmxZM";
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
@@ -283,9 +283,15 @@ function MovsList({movimientos, onEdit, onDelete, onDuplicate}) {
     if (q.trim()) list = list.filter(m=>(m.concepto+m.categoria+(m.notas||"")).toLowerCase().includes(q.toLowerCase()));
     if (desde) list = list.filter(m=>m.fecha>=desde);
     if (hasta) list = list.filter(m=>m.fecha<=hasta);
-    if (orden==="fecha") list = [...list].sort((a,b)=>b.fecha.localeCompare(a.fecha));
-    else if (orden==="importe") list = [...list].sort((a,b)=>b.importe-a.importe);
-    else if (orden==="categoria") list = [...list].sort((a,b)=>a.categoria.localeCompare(b.categoria));
+    
+    // Always sort by date by default, then by other criteria if specified
+    if (orden==="fecha" || orden==="" || !orden) {
+      list = [...list].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
+    } else if (orden==="importe") {
+      list = [...list].sort((a,b)=>b.importe-a.importe);
+    } else if (orden==="categoria") {
+      list = [...list].sort((a,b)=>a.categoria.localeCompare(b.categoria));
+    }
     return list.slice(0,20);
   }, [movimientos, filtro, q, orden, desde, hasta]);
 
