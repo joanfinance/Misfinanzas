@@ -557,6 +557,15 @@ function App() {
   const [msg, setMsg] = useState("");
   const [tab, setTab] = useState("dashboard");
   const [mes, setMes] = useState(nowYM());
+
+  // Update mes whenever it changes in real time
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = nowYM();
+      setMes(now);
+    }, 60000); // Update every minute
+    return () => clearInterval(interval);
+  }, []);
   const [saving, setSaving] = useState(false);
   const [confirmDel, setConfirmDel] = useState(null);
   const [deleting, setDeleting] = useState(false);
