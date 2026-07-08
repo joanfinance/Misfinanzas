@@ -29,7 +29,7 @@
 <script type="text/babel" data-presets="react">
 const {useState, useEffect, useRef, useCallback, useMemo} = React;
 
-const VERSION = "v4.4";
+const VERSION = "v4.5";
 const CLIENT_ID = "343869806932-59pi5fq8micnj2rrlagmcl6c9dvrad5l.apps.googleusercontent.com";
 const API_KEY = "AIzaSyAnX2AqSv_od3LYvT7n8WaCWL5T0WTmxZM";
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
@@ -45,7 +45,7 @@ const MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto"
 const C = {
   bg:"#0f0f13", surface:"#16161d", card:"#1c1c26", border:"#2a2a3a",
   accent:"#6ee7b7", accentDim:"#1a3d30", red:"#f87171", redDim:"#3d1a1a",
-  yellow:"#fbbf24", text:"#e8e8f0", muted:"#6b6b80",
+  yellow:"#fbbf24", yellowDim:"#3d2d00", text:"#e8e8f0", muted:"#6b6b80",
   personal:"#818cf8", personalDim:"#1e1e3d", orange:"#fb923c", orangeDim:"#3d1e00",
 };
 
@@ -56,7 +56,7 @@ const toFloat = s => parseFloat(String(s).replace(",","."))||0;
 const rKey = (id,y,m) => `${id}-${y}-${m}`;
 const getCats = (bl,ti) => ti==="ingreso" ? (bl==="familiar"?ING_FAM:ING_PER) : (bl==="familiar"?CAT_FAM:CAT_PER);
 const defCat = (bl,ti) => getCats(bl,ti)[0];
-const emptyData = () => ({movimientos:[], recurrentes:[], confirmados:{}, presupuestos:{}});
+const emptyData = () => ({movimientos:[], recurrentes:[], confirmados:{}, presupuestos:{}, notasMes:{}});
 
 const migrate = raw => {
   if (!raw) return emptyData();
@@ -571,6 +571,12 @@ function App() {
   const [deleting, setDeleting] = useState(false);
   const [editMov, setEditMov] = useState(null);
   const [editSaving, setEditSaving] = useState(false);
+
+  // Filter out excluded movimientos from calculations
+  const movimientosActivos = useMemo(() => 
+    (data.movimientos||[]).filter(m => !m.excluido),
+    [data.movimientos]
+  );
   const [confirmDelRec, setConfirmDelRec] = useState(null);
   const [deletingRec, setDeletingRec] = useState(false);
   const [editRec, setEditRec] = useState(null);
@@ -580,6 +586,15 @@ function App() {
   const [importMsg, setImportMsg] = useState("");
   const [restoring, setRestoring] = useState(false);
   const [importing, setImporting] = useState(false);
+
+  // Notas del mes actual
+  const mesKey = `${mes.y}-${String(mes.m+1).padStart(2,"0")}`;
+  const notasDelMes = data.notasMes?.[mesKey] || "";
+  
+  const saveNotasMes = async (texto) => {
+    const nd = Object.assign({}, data, {notasMes: Object.assign({}, data.notasMes, {[mesKey]: texto})});
+    await saveData(nd);
+  };
 
   const importeRef = useRef(null);
 
@@ -757,7 +772,7 @@ function App() {
   const savePres = async p => { await saveData(Object.assign({},data,{presupuestos:p})); };
 
   const {movsMes,fI,fG,fS,pI,pG,pS,catF,catP,gastosMes,pendientes,last6,mesLabel,difGas} = useMemo(() => {
-    const movs = data.movimientos||[];
+    const movs = movimientosActivos||[];
     const conf = data.confirmados||{};
     const {y,m} = mes;
     const movsMes = movs.filter(mv => { const d=new Date(mv.fecha); return d.getFullYear()===y&&d.getMonth()===m; });
@@ -767,7 +782,6 @@ function App() {
     const fI=sum(movsMes,"familiar","ingreso"), fG=sum(movsMes,"familiar","gasto");
     const pI=sum(movsMes,"personal","ingreso"), pG=sum(movsMes,"personal","gasto");
     const pends = (data.recurrentes||[]).filter(r=>{
-      // Only show if we're in or after the "desde" date
       const isActive = (r.desdeAño < y) || (r.desdeAño === y && r.desdeMes <= m);
       return isActive && !conf[rKey(r.id,y,m)];
     });
@@ -780,7 +794,7 @@ function App() {
       return {l:MESES[d.getMonth()].slice(0,3), v:sum(mm,"familiar","gasto")+sum(mm,"personal","gasto")};
     });
     return {movsMes,fI,fG,fS:fI-fG,pI,pG,pS:pI-pG,catF:byCat(movsMes,"familiar"),catP:byCat(movsMes,"personal"),gastosMes:gm,pendientes:pends,last6,mesLabel:`${MESES[m]} ${y}`,difGas:(fG+pG)-prevG};
-  }, [data, mes]);
+  }, [movimientosActivos, data, mes]);
 
   const alertasPres = useMemo(() => {
     const pres = data.presupuestos||{};
@@ -857,6 +871,15 @@ function App() {
                 <div style={{color:C.muted,fontSize:11,marginTop:2}}>{fmt(gasto)} de {fmt(lim)} (+{fmt(gasto-lim)})</div>
               </div>
             ))}
+            <Card style={{borderColor:C.yellowDim,background:C.yellow+"08"}}>
+              <div style={{fontSize:12,color:C.muted,marginBottom:8,letterSpacing:1}}>NOTAS DE {MESES[mes.m].toUpperCase()}</div>
+              <textarea 
+                value={notasDelMes} 
+                onChange={e=>saveNotasMes(e.target.value)}
+                placeholder="Apunta aquí observaciones del mes..." 
+                style={{width:"100%",background:C.surface,border:`1px solid ${C.yellow}`,borderRadius:8,color:C.text,padding:"10px 12px",fontSize:13,resize:"vertical",minHeight:"80px",fontFamily:"inherit"}}
+              />
+            </Card>
             {pendientes.length>0 && (
               <div style={{background:C.orangeDim,border:`1px solid ${C.orange}`,borderRadius:12,padding:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <div>
@@ -1182,6 +1205,7 @@ function App() {
             <Field label="NOTAS" value={editMov.notas||""} onChange={v=>setEditMov(m=>Object.assign({},m,{notas:v}))} placeholder="Notas..." multiline={true}/>
             <Field label="FECHA" type="date" value={editMov.fecha} onChange={v=>setEditMov(m=>Object.assign({},m,{fecha:v}))}/>
             {editMov.bloque==="familiar"&&editMov.tipo==="gasto"&&<PagoToggle value={editMov.pago||"tarjeta"} onChange={v=>setEditMov(m=>Object.assign({},m,{pago:v}))}/>}
+            <SwitchField label="🚫 Excluir" sub="No contar en totales (ej: pagos entre familia)" checked={editMov.excluido||false} onChange={v=>setEditMov(m=>Object.assign({},m,{excluido:v||false}))}/>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:20}}>
             <Btn variant="ghost" onClick={()=>setEditMov(null)} disabled={editSaving}>Cancelar</Btn>
