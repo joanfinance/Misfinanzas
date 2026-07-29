@@ -29,7 +29,7 @@
 <script type="text/babel" data-presets="react">
 const {useState, useEffect, useRef, useCallback, useMemo} = React;
 
-const VERSION = "v4.5";
+const VERSION = "v4.7";
 const CLIENT_ID = "343869806932-59pi5fq8micnj2rrlagmcl6c9dvrad5l.apps.googleusercontent.com";
 const API_KEY = "AIzaSyAnX2AqSv_od3LYvT7n8WaCWL5T0WTmxZM";
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
@@ -37,7 +37,7 @@ const FILE_NAME = "finanzas_joan_familia.json";
 const BACKUP_NAME = "finanzas_joan_backup.json";
 
 const CAT_FAM = ["Supermercado","Vehiculo","Varios","Reparaciones casa","Hijos","Ocio familiar","Hipoteca","Suministros"];
-const CAT_PER = ["Ocio personal","Ropa","Gastos varios","Ahorro","Inversion"];
+const CAT_PER = ["Ocio personal","Ropa","Gasto familiar","Gastos varios","Ahorro","Inversion"];
 const ING_FAM = ["Sueldo Joan","Aportacion Joan","Aportacion Silvia","Extras familiar"];
 const ING_PER = ["Sueldo Joan","Otros ingresos"];
 const MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
@@ -337,11 +337,11 @@ function MovsList({movimientos, onEdit, onDelete, onDuplicate}) {
         </div>
       )}
       {filtered.map(m => (
-        <div key={m.id} style={{padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
+        <div key={m.id} style={{padding:"10px 0",borderBottom:`1px solid ${C.border}`,opacity:m.excluido?0.5:1}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontSize:14,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                {m.concepto||m.categoria}{m.recurrenteId?" 🔁":""}
+                {m.concepto||m.categoria}{m.recurrenteId?" 🔁":""}{m.excluido?" 🚫":""}
               </div>
               <div style={{fontSize:11,color:C.muted}}>{m.fecha} · {m.categoria}</div>
               {m.notas && <div style={{fontSize:12,color:C.muted,marginTop:2,fontStyle:"italic"}}>📝 {m.notas}</div>}
