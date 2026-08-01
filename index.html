@@ -683,7 +683,19 @@ function App() {
     const mov = {id:Date.now(),fecha:form.fecha,tipo:form.tipo,bloque:form.bloque,categoria:form.categoria,concepto:form.concepto,importe:imp,pago:form.pago,notas:form.notas};
     let nd = Object.assign({}, data, {movimientos:[mov,...(data.movimientos||[])]});
     if (form.esRec) {
-      const rec = {id:Date.now()+1,concepto:form.concepto,categoria:form.categoria,bloque:form.bloque,tipo:form.tipo,importe:imp,dia:form.diaMes||"1",pago:form.pago,desdeAño:mes.y,desdeMes:mes.m};
+      // Only include pago if it's a familiar expense
+      const rec = {
+        id:Date.now()+1,
+        concepto:form.concepto,
+        categoria:form.categoria,
+        bloque:form.bloque,
+        tipo:form.tipo,
+        importe:imp,
+        dia:form.diaMes||"1",
+        ...(form.bloque==="familiar" && {pago:form.pago}),
+        desdeAño:mes.y,
+        desdeMes:mes.m
+      };
       const conf = Object.assign({}, nd.confirmados||{}, {[rKey(rec.id,mes.y,mes.m)]:true});
       nd = Object.assign({}, nd, {recurrentes:[...(nd.recurrentes||[]),rec], confirmados:conf});
     }
