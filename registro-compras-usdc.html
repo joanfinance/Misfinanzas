@@ -14,6 +14,11 @@
           Mis Finanzas, scope drive.file): reconexión silenciosa al abrir, aviso de conexión y bloqueo de
           acciones cuando Drive no está conectado. Requiere alojarse en un origen ya autorizado para ese
           Client ID (p. ej. el mismo dominio de Mis Finanzas) — no funciona en la vista previa del artefacto.
+  v3.1 — "Extraer datos" ahora detecta un enlace de peerlytics.xyz/explorer/intent|deposit/... y, si es solo
+          eso, intenta ir a buscarlo (botón bloqueado con "Escaneando…"). Si Peerlytics bloquea la lectura
+          cross-origin (CORS), avisa y rellena al menos el hash. Se ha añadido el parseo del formato real de
+          Peerlytics (Amount / Rate / $X fees / net to taker) para cuando se pega el texto visible de la página
+          en lugar del enlace — más fiable que el fetch automático mientras no haya API key de Peerlytics.
 -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -244,7 +249,7 @@
       <h1>Registro de compras USDC</h1>
       <p class="sub">Pega los datos de una compra (Peerlytics / BaseScan) o introdúcelos a mano.</p>
     </div>
-    <span class="version-badge">v3.0</span>
+    <span class="version-badge">v3.1</span>
   </header>
 
   <div class="drive-bar loading" id="driveBar">
@@ -257,7 +262,7 @@
     <label for="raw">Pegar datos brutos (opcional — se intentará rellenar el formulario)</label>
     <textarea id="raw" placeholder="Pega aquí el texto copiado del intent en Peerlytics o BaseScan..."></textarea>
     <div class="extract-row">
-      <button class="btn btn-primary" onclick="extraerDatos()">Extraer datos</button>
+      <button class="btn btn-primary" id="extractBtn" onclick="extraerDatos()">Extraer datos</button>
       <span id="extractMsg" style="font-size:12px;color:var(--ink-soft);"></span>
     </div>
 
@@ -568,64 +573,128 @@ function recalcComputed(){
   document.getElementById(id).addEventListener('input', recalcComputed);
 });
 
-function extraerDatos(){
-  const raw = document.getElementById('raw').value;
+async function extraerDatos(){
+  const btn = document.getElementById('extractBtn');
   const msg = document.getElementById('extractMsg');
-  if(!raw.trim()){ msg.textContent = 'Pega algo de texto primero.'; return; }
+  const rawInput = document.getElementById('raw').value.trim();
+  if(!rawInput){ msg.textContent = 'Pega algo de texto, o un enlace de Peerlytics, primero.'; return; }
+
+  let texto = rawInput;
+
+  // Si es (solo) un enlace de Peerlytics, intenta ir a buscarlo automáticamente.
+  const urlMatch = rawInput.match(/^https?:\/\/peerlytics\.xyz\/explorer\/(intent|deposit)\/(0x[a-fA-F0-9]+)\/?$/i);
+  if(urlMatch){
+    btn.disabled = true;
+    const originalLabel = btn.textContent;
+    btn.textContent = 'Escaneando…';
+    msg.textContent = 'Consultando peerlytics.xyz…';
+    try{
+      const resp = await fetch(urlMatch[0]);
+      if(!resp.ok) throw new Error('HTTP ' + resp.status);
+      texto = await resp.text();
+      msg.textContent = 'Página obtenida, extrayendo datos…';
+    }catch(e){
+      document.getElementById('f-hash').value = urlMatch[2];
+      btn.disabled = false;
+      btn.textContent = originalLabel;
+      msg.textContent = 'Peerlytics no deja leer la página directamente desde aquí (bloqueo CORS del navegador). Copia el texto visible de esa página (el bloque con Amount / Rate / fees) y pégalo aquí, o dime si quieres que conecte su API oficial con una clave — solo he podido rellenar el hash.';
+      return;
+    }
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+  }
+
   let found = [];
 
-  const hashMatch = raw.match(/0x[a-fA-F0-9]{40,64}/);
+  const hashMatch = texto.match(/0x[a-fA-F0-9]{40,64}/);
   if(hashMatch){ document.getElementById('f-hash').value = hashMatch[0]; found.push('hash'); }
 
   let fecha = null;
-  let m = raw.match(/(\d{4})-(\d{2})-(\d{2})/);
+  let m = texto.match(/(\d{4})-(\d{2})-(\d{2})/);
   if(m) fecha = `${m[1]}-${m[2]}-${m[3]}`;
   if(!fecha){
-    m = raw.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+    m = texto.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
     if(m) fecha = `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
   }
   if(fecha){ document.getElementById('f-fecha').value = fecha; found.push('fecha'); }
 
-  let importeMatch = raw.match(/€\s?([\d.,]+)|([\d.,]+)\s?€|EUR\s?([\d.,]+)/i);
-  if(importeMatch){
-    const val = (importeMatch[1]||importeMatch[2]||importeMatch[3]).replace(/\./g,'').replace(',','.');
+  // Formato específico de Peerlytics: "Amount $110.00 €93.93 EUR ... Rate 0.8539 ... $1.05 fees ... net to taker $108.96"
+  const grossMatch = texto.match(/Amount[\s\S]{0,20}?\$([\d.,]+)/i);
+  const netMatch = texto.match(/net to taker[\s\S]{0,40}?\$([\d.,]+)/i);
+  const feeMatch = texto.match(/\$([\d.,]+)\s*fees?/i);
+  const eurMatch = texto.match(/€\s?([\d.,]+)\s*EUR/i);
+
+  let usaPeerlyticsFormato = false;
+  if(grossMatch || netMatch){
+    const gross = grossMatch ? parseFloat(grossMatch[1].replace(/\./g,'').replace(',','.')) : null;
+    const neto = netMatch ? parseFloat(netMatch[1].replace(/\./g,'').replace(',','.')) : gross;
+    if(neto){
+      document.getElementById('f-usdc').value = neto;
+      found.push('usdc (neto recibido)');
+      usaPeerlyticsFormato = true;
+    }
+    if(feeMatch && gross){
+      const feeVal = parseFloat(feeMatch[1].replace(/\./g,'').replace(',','.'));
+      document.getElementById('f-comision').value = ((feeVal/gross)*100).toFixed(2);
+      found.push('comisión');
+    }
+  }
+  if(eurMatch){
+    const val = eurMatch[1].replace(/\./g,'').replace(',','.');
     document.getElementById('f-importe').value = parseFloat(val);
     document.getElementById('f-moneda').value = 'EUR';
-    found.push('importe');
-  } else {
-    const usdMatch = raw.match(/\$\s?([\d.,]+)|USD\s?([\d.,]+)/i);
-    if(usdMatch){
-      const val = (usdMatch[1]||usdMatch[2]).replace(/\./g,'').replace(',','.');
+    found.push('importe (EUR)');
+    usaPeerlyticsFormato = true;
+  }
+
+  // Fallback genérico (BaseScan u otros formatos) si no se ha detectado ya con el formato de Peerlytics
+  if(!usaPeerlyticsFormato){
+    let importeMatch = texto.match(/€\s?([\d.,]+)|([\d.,]+)\s?€|EUR\s?([\d.,]+)/i);
+    if(importeMatch){
+      const val = (importeMatch[1]||importeMatch[2]||importeMatch[3]).replace(/\./g,'').replace(',','.');
       document.getElementById('f-importe').value = parseFloat(val);
-      document.getElementById('f-moneda').value = 'USD';
+      document.getElementById('f-moneda').value = 'EUR';
       found.push('importe');
+    } else {
+      const usdMatch = texto.match(/\$\s?([\d.,]+)|USD\s?([\d.,]+)/i);
+      if(usdMatch){
+        const val = (usdMatch[1]||usdMatch[2]).replace(/\./g,'').replace(',','.');
+        document.getElementById('f-importe').value = parseFloat(val);
+        document.getElementById('f-moneda').value = 'USD';
+        found.push('importe');
+      }
+    }
+    const usdcMatch = texto.match(/([\d.,]+)\s?USDC/i);
+    if(usdcMatch){
+      const val = usdcMatch[1].replace(/\./g,'').replace(',','.');
+      document.getElementById('f-usdc').value = parseFloat(val);
+      found.push('usdc');
+    }
+    const comMatch = texto.match(/([\d.,]+)\s?%/);
+    if(comMatch){
+      document.getElementById('f-comision').value = parseFloat(comMatch[1].replace(',','.'));
+      found.push('comisión');
     }
   }
 
-  const usdcMatch = raw.match(/([\d.,]+)\s?USDC/i);
-  if(usdcMatch){
-    const val = usdcMatch[1].replace(/\./g,'').replace(',','.');
-    document.getElementById('f-usdc').value = parseFloat(val);
-    found.push('usdc');
-  }
-
-  const comMatch = raw.match(/([\d.,]+)\s?%/);
-  if(comMatch){
-    document.getElementById('f-comision').value = parseFloat(comMatch[1].replace(',','.'));
-    found.push('comisión');
-  }
-
   const plataformas = ['Wise','Revolut','PayPal','Bizum','Zelle','Venmo','SEPA','Cash App'];
-  const plat = plataformas.find(p => new RegExp(p,'i').test(raw));
+  const plat = plataformas.find(p => new RegExp(p,'i').test(texto));
   if(plat){ document.getElementById('f-plataforma').value = plat; found.push('plataforma'); }
 
-  if(/disputa|partial|parcial/i.test(raw)){
-    document.getElementById('f-estado').value = /disputa/i.test(raw) ? 'Disputada' : 'Parcial';
+  if(/disputa/i.test(texto)){
+    document.getElementById('f-estado').value = 'Disputada';
+    found.push('estado');
+  } else if(/partial fill|parcial/i.test(texto)){
+    document.getElementById('f-estado').value = 'Parcial';
     found.push('estado');
   }
 
   recalcComputed();
-  msg.textContent = found.length ? ('Detectado: ' + found.join(', ') + '. Revisa antes de guardar.') : 'No se ha podido detectar nada automáticamente — rellena a mano.';
+  if(!fecha){
+    msg.textContent = (found.length ? 'Detectado: ' + found.join(', ') + '. ' : '') + 'Peerlytics no muestra la fecha exacta en ese bloque — complétala a mano. Revisa el resto antes de guardar.';
+  } else {
+    msg.textContent = found.length ? ('Detectado: ' + found.join(', ') + '. Revisa antes de guardar.') : 'No se ha podido detectar nada automáticamente — rellena a mano.';
+  }
 }
 
 function limpiarFormulario(){
