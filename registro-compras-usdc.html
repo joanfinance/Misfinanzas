@@ -2,27 +2,23 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Registro de compras USDC — Peer.xyz</title>
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#FAF8F3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#14171C" media="(prefers-color-scheme: dark)">
 <!--
   CHANGELOG
   v1.0 — Registro básico: alta manual/pegado con extracción por patrones, tabla, totales, aviso de comisión, export CSV.
-  v2.0 — Añadido: campo Estado (completa/parcial/disputada), comparación del precio pagado con el tipo de
-          cambio EUR/USD histórico (frankfurter.app), gráfico de evolución del precio por USDC, filtros por
-          plataforma y rango de fechas, importación desde CSV.
+  v2.0 — Estado (completa/parcial/disputada), comparación con tipo de cambio EUR/USD histórico, gráfico de
+          evolución, filtros por plataforma y fechas, importación CSV.
   v3.0 — Sustituido el almacenamiento interno por sincronización con Google Drive (mismo Client ID OAuth que
-          Mis Finanzas, scope drive.file): reconexión silenciosa al abrir, aviso de conexión y bloqueo de
-          acciones cuando Drive no está conectado. Requiere alojarse en un origen ya autorizado para ese
-          Client ID (p. ej. el mismo dominio de Mis Finanzas) — no funciona en la vista previa del artefacto.
-  v3.1 — "Extraer datos" ahora detecta un enlace de peerlytics.xyz/explorer/intent|deposit/... y, si es solo
-          eso, intenta ir a buscarlo (botón bloqueado con "Escaneando…"). Si Peerlytics bloquea la lectura
-          cross-origin (CORS), avisa y rellena al menos el hash. Se ha añadido el parseo del formato real de
-          Peerlytics (Amount / Rate / $X fees / net to taker) para cuando se pega el texto visible de la página
-          en lugar del enlace — más fiable que el fetch automático mientras no haya API key de Peerlytics.
-  v3.2 — Añadido un formato JSON explícito (fecha/importe/moneda/plataforma/usdc_neto/comision_pct/hash/estado/
-          notas) como vía preferente de entrada: si el campo "Pegar datos brutos" contiene ese JSON, se rellena
-          el formulario directamente sin depender de patrones de texto. Botón "Copiar prompt para pedir el
-          JSON" con la plantilla exacta a pasarle a Claude en otro chat para que la devuelva lista para pegar.
+          Mis Finanzas, scope drive.file), con reconexión silenciosa y bloqueo de acciones sin conexión.
+  v3.1-3.2 — Iteraciones sobre la extracción de datos (fetch por enlace, parseo de texto, formato JSON).
+  v3.3 — Simplificado a una única vía de entrada: bloque JSON con formato fijo.
+  v4.0 — Rediseño: modo oscuro automático (prefers-color-scheme + theme-color), navegación por pestañas
+          (Resumen/Historial/Ajustes) con barra inferior fija, botón + flotante que abre la pantalla de
+          nueva/editar compra, y dashboard con métricas y gráfico de evolución al iniciar.
 -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -39,10 +35,30 @@
     --warn:#B5651D;
     --warn-soft:#FBEEE0;
     --danger:#B3261E;
+    --danger-soft:#FBEAE9;
     --ok:#2E7D46;
     --ok-soft:#E7F4EB;
+    --nav-h: 60px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --paper:#14171C;
+      --paper-raised:#1D2128;
+      --ink:#ECEAE3;
+      --ink-soft:#8B93A0;
+      --line:#2B303A;
+      --usdc:#5B9BE0;
+      --usdc-soft:#16273F;
+      --warn:#E0A458;
+      --warn-soft:#3A2A15;
+      --danger:#E5776F;
+      --danger-soft:#3A1E1C;
+      --ok:#6FC98A;
+      --ok-soft:#173425;
+    }
   }
   *{box-sizing:border-box;}
+  html,body{height:100%;}
   body{
     margin:0;
     background:var(--paper);
@@ -50,138 +66,114 @@
     font-family:'Space Grotesk',sans-serif;
     -webkit-font-smoothing:antialiased;
   }
-  .wrap{max-width:1020px;margin:0 auto;padding:28px 18px 80px;}
-  header{margin-bottom:14px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;}
-  .eyebrow{
-    font-family:'IBM Plex Mono',monospace;
-    font-size:12px;
-    letter-spacing:.08em;
-    text-transform:uppercase;
-    color:var(--usdc);
-    margin:0 0 6px;
-  }
-  h1{font-size:26px;font-weight:700;margin:0 0 4px;letter-spacing:-.01em;}
-  .sub{color:var(--ink-soft);font-size:14px;margin:0;}
-  .version-badge{
-    font-family:'IBM Plex Mono',monospace;
-    font-size:11.5px;
-    color:var(--ink-soft);
-    background:#F0EDE3;
-    border:1px solid var(--line);
-    border-radius:20px;
-    padding:4px 10px;
-    white-space:nowrap;
-    margin-top:2px;
-  }
+  .app{min-height:100%;padding-bottom:calc(var(--nav-h) + 24px + env(safe-area-inset-bottom));}
 
-  .drive-bar{
-    display:flex;
-    align-items:center;
-    gap:10px;
-    padding:10px 14px;
-    border-radius:8px;
-    font-size:13px;
-    margin-bottom:18px;
-    border:1px solid var(--line);
+  .topbar{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:16px 18px 8px;
+    max-width:640px;margin:0 auto;
   }
-  .drive-bar.connected{background:var(--ok-soft);color:var(--ok);border-color:#CFE7D6;}
-  .drive-bar.disconnected{background:var(--warn-soft);color:var(--warn);border-color:#F0DDBF;}
-  .drive-bar.loading{background:#F0EDE3;color:var(--ink-soft);}
-  .dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex-shrink:0;}
+  .topbar h1{font-size:19px;font-weight:700;margin:0;letter-spacing:-.01em;}
+  .topbar .eyebrow{
+    font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--usdc);margin:0 0 2px;
+  }
+  .drive-dot{
+    width:10px;height:10px;border-radius:50%;flex-shrink:0;
+    background:var(--ink-soft);
+  }
+  .drive-dot.connected{background:var(--ok);}
+  .drive-dot.disconnected{background:var(--danger);}
+  .drive-wrap{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;}
 
-  section{
+  main{max-width:640px;margin:0 auto;padding:4px 16px 0;}
+
+  .tab-panel{display:none;}
+  .tab-panel.active{display:block;}
+
+  section, .card{
     background:var(--paper-raised);
     border:1px solid var(--line);
-    border-radius:10px;
-    padding:18px;
-    margin-bottom:18px;
+    border-radius:12px;
+    padding:16px;
+    margin-bottom:14px;
   }
-  section > h2{
-    font-size:14px;
-    font-weight:600;
-    text-transform:uppercase;
-    letter-spacing:.04em;
-    color:var(--ink-soft);
-    margin:0 0 14px;
+  section > h2, .card-title{
+    font-size:12.5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;
+    color:var(--ink-soft);margin:0 0 12px;
   }
-  section.disabled{opacity:.55;pointer-events:none;}
+
+  .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .stat-card{
+    background:var(--paper-raised);border:1px solid var(--line);border-radius:12px;
+    padding:14px 14px;
+  }
+  .stat-label{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin:0 0 6px;}
+  .stat-value{font-family:'IBM Plex Mono',monospace;font-size:19px;font-weight:600;margin:0;}
+  .stat-sub{font-size:11px;color:var(--ink-soft);margin-top:3px;font-family:'IBM Plex Mono',monospace;}
+
+  .alert-list{display:flex;flex-direction:column;gap:8px;}
+  .alert-item{
+    display:flex;align-items:center;gap:8px;font-size:13px;
+    padding:9px 11px;border-radius:8px;background:var(--warn-soft);color:var(--warn);
+  }
+  .alert-item.danger{background:var(--danger-soft);color:var(--danger);}
+  .alert-item .dot2{width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0;}
+
+  .empty-dash{
+    text-align:center;padding:26px 14px;color:var(--ink-soft);font-size:13.5px;
+  }
+  .empty-dash .big{font-size:34px;margin-bottom:6px;}
+
+  .mini-list{display:flex;flex-direction:column;}
+  .mini-row{
+    display:flex;justify-content:space-between;align-items:center;
+    padding:9px 0;border-bottom:1px solid var(--line);font-size:13px;
+  }
+  .mini-row:last-child{border-bottom:none;}
+  .mini-row .mr-left{display:flex;flex-direction:column;gap:2px;}
+  .mini-row .mr-date{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-soft);}
+  .mini-row .mr-val{font-family:'IBM Plex Mono',monospace;font-weight:600;}
+  .link-btn{background:none;border:none;color:var(--usdc);font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:12.5px;cursor:pointer;padding:0;}
 
   textarea{
-    width:100%;
-    min-height:76px;
-    border:1px solid var(--line);
-    border-radius:8px;
-    padding:10px 12px;
-    font-family:'IBM Plex Mono',monospace;
-    font-size:12.5px;
-    resize:vertical;
-    background:#FCFBF8;
-    color:var(--ink);
+    width:100%;min-height:76px;border:1px solid var(--line);border-radius:8px;
+    padding:10px 12px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;
+    resize:vertical;background:var(--paper);color:var(--ink);
   }
-  textarea:focus, input:focus, select:focus{
-    outline:2px solid var(--usdc);
-    outline-offset:1px;
-  }
+  textarea:focus, input:focus, select:focus{outline:2px solid var(--usdc);outline-offset:1px;}
 
   .extract-row{display:flex;gap:10px;margin-top:10px;align-items:center;flex-wrap:wrap;}
 
-  .grid{
-    display:grid;
-    grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
-    gap:12px;
-    margin-top:4px;
-  }
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:4px;}
   label{
-    display:block;
-    font-size:11.5px;
-    font-weight:600;
-    color:var(--ink-soft);
-    text-transform:uppercase;
-    letter-spacing:.03em;
-    margin-bottom:4px;
+    display:block;font-size:11.5px;font-weight:600;color:var(--ink-soft);
+    text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px;
   }
   input, select{
-    width:100%;
-    padding:9px 10px;
-    border:1px solid var(--line);
-    border-radius:7px;
-    font-family:'IBM Plex Mono',monospace;
-    font-size:13.5px;
-    background:#FCFBF8;
-    color:var(--ink);
+    width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:7px;
+    font-family:'IBM Plex Mono',monospace;font-size:13.5px;background:var(--paper);color:var(--ink);
   }
   .field-full{grid-column:1/-1;}
 
   .computed{
-    margin-top:12px;
-    padding:10px 12px;
-    background:var(--usdc-soft);
-    border-radius:8px;
-    font-family:'IBM Plex Mono',monospace;
-    font-size:13px;
-    color:#134a82;
-    display:flex;
-    gap:22px;
-    flex-wrap:wrap;
+    margin-top:12px;padding:10px 12px;background:var(--usdc-soft);border-radius:8px;
+    font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--usdc);
+    display:flex;gap:22px;flex-wrap:wrap;
   }
   .computed b{font-weight:600;}
 
   .btn{
-    font-family:'Space Grotesk',sans-serif;
-    font-weight:600;
-    font-size:13.5px;
-    border:none;
-    border-radius:7px;
-    padding:10px 16px;
-    cursor:pointer;
-    transition:opacity .15s;
+    font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:13.5px;
+    border:none;border-radius:7px;padding:10px 16px;cursor:pointer;transition:opacity .15s;
   }
   .btn:hover{opacity:.85;}
   .btn:disabled{opacity:.5;cursor:not-allowed;}
   .btn-primary{background:var(--usdc);color:white;}
   .btn-ghost{background:transparent;color:var(--ink-soft);border:1px solid var(--line);}
-  .btn-danger{background:transparent;color:var(--danger);border:1px solid #E8C9C6;}
+  .btn-danger{background:transparent;color:var(--danger);border:1px solid var(--danger-soft);}
   .btn-sm{padding:5px 9px;font-size:12px;}
+  .btn-block{width:100%;}
 
   .actions-row{display:flex;justify-content:flex-end;gap:10px;margin-top:14px;flex-wrap:wrap;}
 
@@ -191,218 +183,343 @@
 
   table{width:100%;border-collapse:collapse;font-family:'IBM Plex Mono',monospace;font-size:12.5px;}
   thead th{
-    text-align:left;
-    font-family:'Space Grotesk',sans-serif;
-    font-size:11px;
-    text-transform:uppercase;
-    letter-spacing:.03em;
-    color:var(--ink-soft);
-    padding:0 8px 8px;
-    border-bottom:1px solid var(--line);
-    white-space:nowrap;
+    text-align:left;font-family:'Space Grotesk',sans-serif;font-size:10.5px;
+    text-transform:uppercase;letter-spacing:.03em;color:var(--ink-soft);
+    padding:0 8px 8px;border-bottom:1px solid var(--line);white-space:nowrap;
   }
-  tbody td{
-    padding:9px 8px;
-    border-bottom:1px solid #EFEBDF;
-    white-space:nowrap;
-  }
-  tbody tr:hover{background:#FBF9F4;}
+  tbody td{padding:9px 8px;border-bottom:1px solid var(--line);white-space:nowrap;}
   .num{text-align:right;}
   .hash-link{color:var(--usdc);text-decoration:none;font-size:11.5px;}
   .hash-link:hover{text-decoration:underline;}
   .flag{
-    display:inline-flex;align-items:center;gap:4px;
-    background:var(--warn-soft);color:var(--warn);
-    border-radius:5px;padding:2px 6px;font-size:10.5px;font-weight:600;
-    font-family:'Space Grotesk',sans-serif;
+    display:inline-flex;align-items:center;gap:4px;background:var(--warn-soft);color:var(--warn);
+    border-radius:5px;padding:2px 6px;font-size:10.5px;font-weight:600;font-family:'Space Grotesk',sans-serif;
   }
   .badge{
-    display:inline-flex;align-items:center;
-    border-radius:5px;padding:2px 7px;font-size:10.5px;font-weight:600;
-    font-family:'Space Grotesk',sans-serif;
+    display:inline-flex;align-items:center;border-radius:5px;padding:2px 7px;
+    font-size:10.5px;font-weight:600;font-family:'Space Grotesk',sans-serif;
   }
   .badge-ok{background:var(--ok-soft);color:var(--ok);}
   .badge-warn{background:var(--warn-soft);color:var(--warn);}
-  .badge-danger{background:#FBEAE9;color:var(--danger);}
+  .badge-danger{background:var(--danger-soft);color:var(--danger);}
   .deviation-up{color:var(--warn);}
   .deviation-down{color:var(--ok);}
   tfoot td{padding:12px 8px 4px;font-weight:600;border-top:2px solid var(--ink);}
   .empty{text-align:center;padding:30px 10px;color:var(--ink-soft);font-size:13.5px;}
   .table-scroll{overflow-x:auto;}
-  .top-bar{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px;}
   .settings-inline{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-soft);}
   .settings-inline input{width:70px;}
   .fx-note{font-size:11px;color:var(--ink-soft);margin-top:8px;font-family:'IBM Plex Mono',monospace;}
-  #chartBox{width:100%;overflow-x:auto;}
-  #chartBox svg{display:block;}
+  #chartBox, #chartBoxDash{width:100%;overflow-x:auto;}
+  #chartBox svg, #chartBoxDash svg{display:block;}
   .legend{display:flex;gap:16px;font-size:11.5px;color:var(--ink-soft);margin-top:8px;flex-wrap:wrap;}
   .legend span{display:inline-flex;align-items:center;gap:5px;}
   .swatch{width:10px;height:10px;border-radius:2px;display:inline-block;}
   input[type=file]{font-family:'Space Grotesk',sans-serif;font-size:12.5px;}
+  .version-line{font-size:11px;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;margin-top:2px;}
+
+  /* Bottom nav */
+  .bottom-nav{
+    position:fixed;left:0;right:0;bottom:0;
+    height:calc(var(--nav-h) + env(safe-area-inset-bottom));
+    padding-bottom:env(safe-area-inset-bottom);
+    background:var(--paper-raised);
+    border-top:1px solid var(--line);
+    display:flex;
+    z-index:20;
+  }
+  .nav-btn{
+    flex:1;background:none;border:none;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:3px;color:var(--ink-soft);
+    font-family:'Space Grotesk',sans-serif;font-size:10.5px;font-weight:600;cursor:pointer;
+  }
+  .nav-btn.active{color:var(--usdc);}
+  .nav-btn svg{width:21px;height:21px;}
+
+  .fab{
+    position:fixed;
+    right:18px;
+    bottom:calc(var(--nav-h) + env(safe-area-inset-bottom) + 16px);
+    width:54px;height:54px;border-radius:50%;
+    background:var(--usdc);color:white;border:none;
+    font-size:28px;line-height:1;
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:0 4px 14px rgba(0,0,0,.25);
+    cursor:pointer;z-index:21;
+  }
+  .fab:disabled{opacity:.4;cursor:not-allowed;}
+
+  /* Nueva compra panel (abierto por el FAB) */
+  #panel-nueva{display:none;position:fixed;inset:0;background:var(--paper);z-index:30;overflow-y:auto;}
+  #panel-nueva.active{display:block;}
+  .panel-header{
+    display:flex;align-items:center;gap:10px;padding:16px 16px 6px;
+    max-width:640px;margin:0 auto;
+  }
+  .panel-header h2{font-size:17px;margin:0;font-weight:700;}
+  .icon-btn{background:none;border:none;color:var(--ink);cursor:pointer;padding:6px;display:flex;}
+  .icon-btn svg{width:22px;height:22px;}
+  .panel-body{max-width:640px;margin:0 auto;padding:6px 16px 40px;}
+
   @media (max-width:640px){
-    h1{font-size:21px;}
+    .topbar h1{font-size:17px;}
     .computed{flex-direction:column;gap:6px;}
+    .stat-value{font-size:17px;}
   }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header>
+<div class="app">
+
+  <header class="topbar">
     <div>
       <p class="eyebrow">Peer.xyz · ZKP2P</p>
       <h1>Registro de compras USDC</h1>
-      <p class="sub">Pega los datos de una compra (Peerlytics / BaseScan) o introdúcelos a mano.</p>
     </div>
-    <span class="version-badge">v3.2</span>
+    <div class="drive-wrap">
+      <span class="drive-dot" id="driveDot"></span>
+      <span id="driveText">Conectando…</span>
+    </div>
   </header>
 
-  <div class="drive-bar loading" id="driveBar">
-    <span class="dot"></span>
-    <span id="driveBarText">Conectando con Google Drive…</span>
+  <main>
+
+    <!-- ===== RESUMEN ===== -->
+    <section id="tab-resumen" class="tab-panel active" style="border:none;background:none;padding:0;">
+
+      <div id="driveConnectCard" class="card" style="display:none;">
+        <p class="card-title">Google Drive</p>
+        <p style="font-size:13px;color:var(--ink-soft);margin:0 0 12px;">Necesitas conectar tu cuenta de Google para guardar y ver tus compras.</p>
+        <button class="btn btn-primary btn-block" onclick="conectarDrive()">Conectar con Google Drive</button>
+      </div>
+
+      <div id="dashEmpty" class="card" style="display:none;">
+        <div class="empty-dash">
+          <div class="big">🪙</div>
+          Todavía no hay compras registradas.<br>Usa el botón + para añadir la primera.
+        </div>
+      </div>
+
+      <div id="dashContent" style="display:none;">
+        <div class="stat-grid" style="margin-bottom:14px;">
+          <div class="stat-card">
+            <p class="stat-label">Total invertido</p>
+            <p class="stat-value" id="dashTotalImporte">—</p>
+          </div>
+          <div class="stat-card">
+            <p class="stat-label">USDC acumulado</p>
+            <p class="stat-value" id="dashTotalUsdc">—</p>
+          </div>
+          <div class="stat-card">
+            <p class="stat-label">Precio medio</p>
+            <p class="stat-value" id="dashPrecioMedio">—</p>
+            <p class="stat-sub" id="dashPrecioMedioSub"></p>
+          </div>
+          <div class="stat-card">
+            <p class="stat-label">Compras</p>
+            <p class="stat-value" id="dashNumCompras">—</p>
+            <p class="stat-sub" id="dashComisionMedia"></p>
+          </div>
+        </div>
+
+        <div class="card" id="dashAlertsCard" style="display:none;">
+          <p class="card-title">Avisos</p>
+          <div class="alert-list" id="dashAlerts"></div>
+        </div>
+
+        <div class="card">
+          <p class="card-title">Evolución del precio por USDC</p>
+          <div id="chartBoxDash"></div>
+          <div class="legend">
+            <span><span class="swatch" style="background:var(--usdc)"></span>Precio pagado</span>
+            <span><span class="swatch" style="background:var(--ink-soft)"></span>Referencia USD→EUR</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <p class="card-title">Últimas compras</p>
+          <div class="mini-list" id="dashMiniList"></div>
+          <div class="actions-row" style="justify-content:flex-start;margin-top:10px;">
+            <button class="link-btn" onclick="cambiarTab('historial')">Ver historial completo →</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== HISTORIAL ===== -->
+    <section id="tab-historial" class="tab-panel" style="border:none;background:none;padding:0;">
+      <div class="card">
+        <div class="filters-row">
+          <div>
+            <label for="filtroPlataforma">Plataforma</label>
+            <select id="filtroPlataforma" onchange="render()"><option value="">Todas</option></select>
+          </div>
+          <div>
+            <label for="filtroDesde">Desde</label>
+            <input type="date" id="filtroDesde" onchange="render()">
+          </div>
+          <div>
+            <label for="filtroHasta">Hasta</label>
+            <input type="date" id="filtroHasta" onchange="render()">
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="limpiarFiltros()">Limpiar filtros</button>
+        </div>
+
+        <div class="table-scroll">
+          <table id="tabla">
+            <thead>
+              <tr>
+                <th>Fecha</th><th class="num">Importe</th><th>Plataforma</th><th class="num">USDC</th>
+                <th class="num">Comisión</th><th class="num">Valor USDC</th><th class="num">Δ mercado</th>
+                <th>Estado</th><th>Hash</th><th>Notas</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+            <tfoot id="tfoot"></tfoot>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== AJUSTES ===== -->
+    <section id="tab-ajustes" class="tab-panel" style="border:none;background:none;padding:0;">
+
+      <div class="card">
+        <p class="card-title">Google Drive</p>
+        <p style="font-size:13px;margin:2px 0 12px;" id="ajustesDriveText">—</p>
+        <button class="btn btn-ghost btn-sm" onclick="conectarDrive()">Reconectar</button>
+      </div>
+
+      <div class="card">
+        <p class="card-title">Comisión esperada</p>
+        <div class="settings-inline">
+          <span>Avisar si la comisión no es</span>
+          <input type="number" step="0.01" id="comisionEsperada" value="0.95" onchange="guardarAjustesYRender()">
+          <span>%</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <p class="card-title">Datos</p>
+        <div class="actions-row" style="justify-content:flex-start;">
+          <label class="btn btn-ghost btn-sm" id="importLabel" style="cursor:pointer;">
+            Importar CSV
+            <input type="file" id="importInput" accept=".csv" style="display:none;" onchange="importarCSV(event)">
+          </label>
+          <button class="btn btn-ghost btn-sm" onclick="exportarCSV()">Exportar CSV</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <p class="card-title">Sobre esta app</p>
+        <p class="version-line">Registro de compras USDC · v4.0</p>
+      </div>
+    </section>
+
+  </main>
+
+  <button class="fab" id="fabBtn" onclick="abrirNueva()">+</button>
+
+  <nav class="bottom-nav">
+    <button class="nav-btn active" data-tab="resumen" onclick="cambiarTab('resumen')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v9.5a1 1 0 0 0 1 1H9v-6h6v6h2.5a1 1 0 0 0 1-1V10"/></svg>
+      Resumen
+    </button>
+    <button class="nav-btn" data-tab="historial" onclick="cambiarTab('historial')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>
+      Historial
+    </button>
+    <button class="nav-btn" data-tab="ajustes" onclick="cambiarTab('ajustes')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M4.6 15A1.7 1.7 0 0 1 3 12a1.7 1.7 0 0 1 1.6-3 1.7 1.7 0 0 0 1.55-1A1.7 1.7 0 0 0 5.8 5.5 1.7 1.7 0 0 1 8.2 3a1.7 1.7 0 0 1 1 1.55A1.7 1.7 0 0 0 12 5a1.7 1.7 0 0 0 1.55-1A1.7 1.7 0 0 1 16 3a1.7 1.7 0 0 1 1 2.5 1.7 1.7 0 0 0-.35 1.9A1.7 1.7 0 0 0 18 8a1.7 1.7 0 0 1 2 1.6 1.7 1.7 0 0 1-1 1.55A1.7 1.7 0 0 0 18 12a1.7 1.7 0 0 0 1 1.85A1.7 1.7 0 0 1 20 15a1.7 1.7 0 0 1-2.5 1 1.7 1.7 0 0 0-1.9.35A1.7 1.7 0 0 0 15 18a1.7 1.7 0 0 1-1.6 2 1.7 1.7 0 0 1-1.55-1A1.7 1.7 0 0 0 10 18a1.7 1.7 0 0 0-1 .35A1.7 1.7 0 0 1 6.5 20a1.7 1.7 0 0 1-1-2.5 1.7 1.7 0 0 0-.35-1.9A1.7 1.7 0 0 0 4.6 15Z"/></svg>
+      Ajustes
+    </button>
+  </nav>
+
+  <!-- ===== PANEL NUEVA / EDITAR COMPRA ===== -->
+  <div id="panel-nueva">
+    <div class="panel-header">
+      <button class="icon-btn" onclick="cerrarNueva()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+      </button>
+      <h2 id="panelTitulo">Nueva compra</h2>
+    </div>
+    <div class="panel-body">
+
+      <section>
+        <h2>Pegar datos</h2>
+        <label for="raw">Bloque de datos que te haya dado Claude</label>
+        <textarea id="raw" placeholder="Pega aquí el bloque de datos..."></textarea>
+        <div class="extract-row">
+          <button class="btn btn-primary" id="extractBtn" onclick="extraerDatos()">Cargar datos</button>
+          <button class="btn btn-ghost btn-sm" onclick="copiarPrompt()">Copiar prompt para pedirlo</button>
+        </div>
+        <p class="fx-note" id="extractMsg"></p>
+      </section>
+
+      <section>
+        <h2>Datos de la compra</h2>
+        <div class="grid">
+          <div>
+            <label for="f-fecha">Fecha</label>
+            <input type="date" id="f-fecha">
+          </div>
+          <div>
+            <label for="f-importe">Importe pagado</label>
+            <input type="number" step="0.01" id="f-importe" placeholder="0.00">
+          </div>
+          <div>
+            <label for="f-moneda">Moneda</label>
+            <select id="f-moneda"><option>EUR</option><option>USD</option><option>GBP</option><option>Otra</option></select>
+          </div>
+          <div>
+            <label for="f-plataforma">Plataforma de pago</label>
+            <input list="plataformas" id="f-plataforma" placeholder="Wise, Revolut...">
+            <datalist id="plataformas">
+              <option value="Wise"></option><option value="Revolut"></option>
+              <option value="Transferencia SEPA"></option><option value="Bizum"></option>
+              <option value="PayPal"></option><option value="Tarjeta"></option>
+            </datalist>
+          </div>
+          <div>
+            <label for="f-usdc">USDC recibidos</label>
+            <input type="number" step="0.000001" id="f-usdc" placeholder="0.00">
+          </div>
+          <div>
+            <label for="f-comision">Comisión (%)</label>
+            <input type="number" step="0.01" id="f-comision" placeholder="0.95">
+          </div>
+          <div>
+            <label for="f-estado">Estado</label>
+            <select id="f-estado"><option>Completa</option><option>Parcial</option><option>Disputada</option></select>
+          </div>
+          <div>
+            <label for="f-hash">Hash (intent/tx)</label>
+            <input type="text" id="f-hash" placeholder="0x...">
+          </div>
+          <div class="field-full">
+            <label for="f-notas">Notas</label>
+            <input type="text" id="f-notas" placeholder="Detalle del caso, referencia al ticket, etc.">
+          </div>
+        </div>
+
+        <div class="computed" id="computedBox">
+          <span><b>Valor USDC:</b> <span id="calcValor">—</span></span>
+          <span><b>Comisión estimada:</b> <span id="calcComision">—</span></span>
+        </div>
+
+        <div class="actions-row">
+          <button class="btn btn-ghost" onclick="limpiarFormulario()">Limpiar</button>
+          <button class="btn btn-primary" onclick="guardarCompra()" id="saveBtn">Guardar en el registro</button>
+        </div>
+      </section>
+
+      <div class="actions-row" id="deleteRow" style="display:none;justify-content:flex-start;">
+        <button class="btn btn-danger btn-sm" onclick="borrarDesdeEdicion()">Eliminar esta compra</button>
+      </div>
+
+    </div>
   </div>
 
-  <section id="formSection" class="disabled">
-    <h2>Nueva compra</h2>
-    <label for="raw">Pegar datos de la compra (el bloque que te dé Claude)</label>
-    <textarea id="raw" placeholder="Pega aquí el bloque de datos que te haya devuelto Claude..."></textarea>
-    <div class="extract-row">
-      <button class="btn btn-primary" id="extractBtn" onclick="extraerDatos()">Cargar datos</button>
-      <button class="btn btn-ghost btn-sm" onclick="copiarPrompt()">Copiar prompt para pedirlo</button>
-      <span id="extractMsg" style="font-size:12px;color:var(--ink-soft);"></span>
-    </div>
-
-    <div class="grid" style="margin-top:18px;">
-      <div>
-        <label for="f-fecha">Fecha</label>
-        <input type="date" id="f-fecha">
-      </div>
-      <div>
-        <label for="f-importe">Importe pagado</label>
-        <input type="number" step="0.01" id="f-importe" placeholder="0.00">
-      </div>
-      <div>
-        <label for="f-moneda">Moneda</label>
-        <select id="f-moneda">
-          <option>EUR</option>
-          <option>USD</option>
-          <option>GBP</option>
-          <option>Otra</option>
-        </select>
-      </div>
-      <div>
-        <label for="f-plataforma">Plataforma de pago</label>
-        <input list="plataformas" id="f-plataforma" placeholder="Wise, Revolut...">
-        <datalist id="plataformas">
-          <option value="Wise"></option>
-          <option value="Revolut"></option>
-          <option value="Transferencia SEPA"></option>
-          <option value="Bizum"></option>
-          <option value="PayPal"></option>
-          <option value="Tarjeta"></option>
-        </datalist>
-      </div>
-      <div>
-        <label for="f-usdc">USDC recibidos</label>
-        <input type="number" step="0.000001" id="f-usdc" placeholder="0.00">
-      </div>
-      <div>
-        <label for="f-comision">Comisión (%)</label>
-        <input type="number" step="0.01" id="f-comision" placeholder="0.95">
-      </div>
-      <div>
-        <label for="f-estado">Estado</label>
-        <select id="f-estado">
-          <option>Completa</option>
-          <option>Parcial</option>
-          <option>Disputada</option>
-        </select>
-      </div>
-      <div>
-        <label for="f-hash">Hash (intent/tx)</label>
-        <input type="text" id="f-hash" placeholder="0x...">
-      </div>
-      <div class="field-full">
-        <label for="f-notas">Notas</label>
-        <input type="text" id="f-notas" placeholder="Detalle del caso, referencia al ticket de soporte, etc.">
-      </div>
-    </div>
-
-    <div class="computed" id="computedBox">
-      <span><b>Valor USDC:</b> <span id="calcValor">—</span></span>
-      <span><b>Comisión estimada:</b> <span id="calcComision">—</span></span>
-    </div>
-
-    <div class="actions-row">
-      <button class="btn btn-ghost" onclick="limpiarFormulario()">Limpiar</button>
-      <button class="btn btn-primary" onclick="guardarCompra()" id="saveBtn">Guardar en el registro</button>
-    </div>
-  </section>
-
-  <section>
-    <h2>Evolución del precio pagado por USDC</h2>
-    <div id="chartBox"></div>
-    <div class="legend">
-      <span><span class="swatch" style="background:var(--usdc)"></span>Precio pagado</span>
-      <span><span class="swatch" style="background:var(--ink-soft)"></span>Tipo de cambio de referencia (USD→EUR)</span>
-    </div>
-    <p class="fx-note" id="fxNote"></p>
-  </section>
-
-  <section>
-    <div class="top-bar">
-      <h2 style="margin:0;">Historial</h2>
-      <div class="settings-inline">
-        <span>Comisión esperada</span>
-        <input type="number" step="0.01" id="comisionEsperada" value="0.95" onchange="guardarAjustesYRender()">
-        <span>%</span>
-      </div>
-    </div>
-
-    <div class="filters-row">
-      <div>
-        <label for="filtroPlataforma">Plataforma</label>
-        <select id="filtroPlataforma" onchange="render()"><option value="">Todas</option></select>
-      </div>
-      <div>
-        <label for="filtroDesde">Desde</label>
-        <input type="date" id="filtroDesde" onchange="render()">
-      </div>
-      <div>
-        <label for="filtroHasta">Hasta</label>
-        <input type="date" id="filtroHasta" onchange="render()">
-      </div>
-      <button class="btn btn-ghost btn-sm" onclick="limpiarFiltros()">Limpiar filtros</button>
-    </div>
-
-    <div class="table-scroll">
-      <table id="tabla">
-        <thead>
-          <tr>
-            <th>Fecha</th>
-            <th class="num">Importe</th>
-            <th>Plataforma</th>
-            <th class="num">USDC</th>
-            <th class="num">Comisión</th>
-            <th class="num">Valor USDC</th>
-            <th class="num">Δ vs mercado</th>
-            <th>Estado</th>
-            <th>Hash</th>
-            <th>Notas</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="tbody"></tbody>
-        <tfoot id="tfoot"></tfoot>
-      </table>
-    </div>
-    <div class="actions-row">
-      <label class="btn btn-ghost btn-sm" id="importLabel" style="cursor:pointer;">
-        Importar CSV
-        <input type="file" id="importInput" accept=".csv" style="display:none;" onchange="importarCSV(event)">
-      </label>
-      <button class="btn btn-ghost btn-sm" onclick="exportarCSV()">Exportar CSV</button>
-    </div>
-  </section>
 </div>
 
 <script>
@@ -424,23 +541,45 @@ function fmt(n, dec){
   return Number(n).toLocaleString('es-ES',{minimumFractionDigits:dec,maximumFractionDigits:dec});
 }
 
+/* ---------- Navegación por pestañas ---------- */
+
+function cambiarTab(tab){
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
+  document.getElementById('tab-'+tab).classList.add('active');
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===tab));
+}
+
+function abrirNueva(){
+  if(!driveConnected){ alert('Conecta con Google Drive antes de añadir una compra.'); return; }
+  editingId = null;
+  limpiarFormulario();
+  document.getElementById('panelTitulo').textContent = 'Nueva compra';
+  document.getElementById('deleteRow').style.display = 'none';
+  document.getElementById('panel-nueva').classList.add('active');
+}
+
+function cerrarNueva(){
+  document.getElementById('panel-nueva').classList.remove('active');
+}
+
 /* ---------- Google Drive sync ---------- */
 
-function setDriveBar(state, text){
-  const bar = document.getElementById('driveBar');
-  bar.className = 'drive-bar ' + state;
-  document.getElementById('driveBarText').innerHTML = text;
+function setDriveIndicator(state, text){
+  const dot = document.getElementById('driveDot');
+  dot.className = 'drive-dot ' + state;
+  document.getElementById('driveText').textContent = text;
+  document.getElementById('ajustesDriveText').textContent = text;
 }
 
 function actualizarBloqueoUI(){
-  document.getElementById('formSection').classList.toggle('disabled', !driveConnected);
+  document.getElementById('fabBtn').disabled = !driveConnected;
   document.getElementById('importLabel').style.pointerEvents = driveConnected ? 'auto' : 'none';
   document.getElementById('importLabel').style.opacity = driveConnected ? '1' : '.5';
+  document.getElementById('driveConnectCard').style.display = driveConnected ? 'none' : 'block';
 }
 
 function initGoogleAuth(){
   if(typeof google === 'undefined' || !google.accounts){
-    // el script de Google puede tardar en cargar; reintenta
     setTimeout(initGoogleAuth, 300);
     return;
   }
@@ -452,24 +591,24 @@ function initGoogleAuth(){
         accessToken = resp.access_token;
         driveConnected = true;
         actualizarBloqueoUI();
-        setDriveBar('loading', 'Cargando datos de Drive…');
+        setDriveIndicator('loading', 'Cargando…');
         await cargarDeDrive();
         render();
+        renderDashboard();
         actualizarTiposCambio();
-        setDriveBar('connected', 'Conectado a Google Drive');
+        setDriveIndicator('connected', 'Conectado');
       } else {
         driveConnected = false;
         actualizarBloqueoUI();
-        setDriveBar('disconnected', 'No se pudo conectar. <a href="#" onclick="conectarDrive();return false;" style="color:inherit;text-decoration:underline;">Reintentar</a>');
+        setDriveIndicator('disconnected', 'Desconectado');
       }
     },
     error_callback: () => {
       driveConnected = false;
       actualizarBloqueoUI();
-      setDriveBar('disconnected', 'Sin conexión con Google Drive. <a href="#" onclick="conectarDrive();return false;" style="color:inherit;text-decoration:underline;">Conectar</a>');
+      setDriveIndicator('disconnected', 'Desconectado');
     }
   });
-  // intento de reconexión silenciosa (sin interacción del usuario)
   tokenClient.requestAccessToken({prompt:'none'});
 }
 
@@ -531,15 +670,13 @@ async function cargarDeDrive(){
     }
   }catch(e){
     console.error('Error cargando de Drive', e);
-    setDriveBar('disconnected', 'Error leyendo de Drive. <a href="#" onclick="conectarDrive();return false;" style="color:inherit;text-decoration:underline;">Reintentar</a>');
   }
 }
 
 async function guardarEnDrive(){
   if(!driveConnected){ return; }
   const payload = {
-    compras,
-    fxCache,
+    compras, fxCache,
     ajustes: {comisionEsperada: parseFloat(document.getElementById('comisionEsperada').value)||0}
   };
   try{
@@ -557,6 +694,7 @@ async function guardarEnDrive(){
 
 function guardarAjustesYRender(){
   render();
+  renderDashboard();
   guardarEnDrive();
 }
 
@@ -574,9 +712,6 @@ function recalcComputed(){
   }
   document.getElementById('calcComision').textContent = comisionTexto;
 }
-['f-importe','f-usdc','f-comision'].forEach(id=>{
-  document.getElementById(id).addEventListener('input', recalcComputed);
-});
 
 function copiarPrompt(){
   const plantilla = `Aquí tienes el hash o enlace de una compra en Peer.xyz: [PEGA AQUÍ EL HASH O EL ENLACE DE PEERLYTICS]
@@ -617,7 +752,7 @@ function intentarParsearJSON(texto){
        obj.hash !== undefined){
       return obj;
     }
-  }catch(e){ /* no es JSON, seguimos con el resto de vías */ }
+  }catch(e){}
   return null;
 }
 
@@ -641,7 +776,7 @@ function extraerDatos(){
 
   const datos = intentarParsearJSON(rawInput);
   if(!datos){
-    msg.textContent = 'Eso no tiene el formato esperado. Usa el botón "Copiar prompt" para pedirle a Claude el bloque de datos con el formato correcto, y pega su respuesta tal cual.';
+    msg.textContent = 'Eso no tiene el formato esperado. Usa "Copiar prompt" para pedirle a Claude el bloque con el formato correcto, y pega su respuesta tal cual.';
     return;
   }
   rellenarDesdeJSON(datos);
@@ -654,7 +789,6 @@ function limpiarFormulario(){
   document.getElementById('f-moneda').value = 'EUR';
   document.getElementById('f-estado').value = 'Completa';
   document.getElementById('extractMsg').textContent = '';
-  editingId = null;
   document.getElementById('saveBtn').textContent = 'Guardar en el registro';
   recalcComputed();
 }
@@ -696,14 +830,17 @@ async function guardarCompra(){
     compras.push(entry);
   }
   await guardarEnDrive();
+  cerrarNueva();
   limpiarFormulario();
   render();
+  renderDashboard();
   actualizarTiposCambio();
 }
 
 function editarCompra(id){
   const c = compras.find(x=>x.id===id);
   if(!c) return;
+  editingId = id;
   document.getElementById('f-fecha').value = c.fecha;
   document.getElementById('f-importe').value = c.importe;
   document.getElementById('f-moneda').value = c.moneda;
@@ -713,10 +850,12 @@ function editarCompra(id){
   document.getElementById('f-estado').value = c.estado || 'Completa';
   document.getElementById('f-hash').value = c.hash;
   document.getElementById('f-notas').value = c.notas;
-  editingId = id;
+  document.getElementById('extractMsg').textContent = '';
   document.getElementById('saveBtn').textContent = 'Actualizar compra';
+  document.getElementById('panelTitulo').textContent = 'Editar compra';
+  document.getElementById('deleteRow').style.display = 'flex';
   recalcComputed();
-  window.scrollTo({top:0, behavior:'smooth'});
+  document.getElementById('panel-nueva').classList.add('active');
 }
 
 async function borrarCompra(id){
@@ -725,6 +864,12 @@ async function borrarCompra(id){
   compras = compras.filter(c=>c.id!==id);
   await guardarEnDrive();
   render();
+  renderDashboard();
+}
+
+function borrarDesdeEdicion(){
+  if(!editingId) return;
+  borrarCompra(editingId).then(()=>{ cerrarNueva(); });
 }
 
 function monedaSimbolo(m){
@@ -765,6 +910,8 @@ function desviacion(c){
   return ((valor - rate) / rate) * 100;
 }
 
+/* ---------- Historial (tabla) ---------- */
+
 function render(){
   actualizarSelectPlataformas();
   const tbody = document.getElementById('tbody');
@@ -775,13 +922,11 @@ function render(){
   if(compras.length===0){
     tbody.innerHTML = `<tr><td colspan="11"><div class="empty">Todavía no hay compras registradas.</div></td></tr>`;
     tfoot.innerHTML = '';
-    dibujarGrafico([]);
     return;
   }
   if(filtradas.length===0){
     tbody.innerHTML = `<tr><td colspan="11"><div class="empty">Ninguna compra coincide con los filtros.</div></td></tr>`;
     tfoot.innerHTML = '';
-    dibujarGrafico([]);
     return;
   }
 
@@ -812,7 +957,6 @@ function render(){
       <td>${c.notas||''}</td>
       <td>
         <button class="btn btn-ghost btn-sm" onclick="editarCompra('${c.id}')">Editar</button>
-        <button class="btn btn-danger btn-sm" onclick="borrarCompra('${c.id}')">Eliminar</button>
       </td>
     </tr>`;
   }).join('');
@@ -831,12 +975,75 @@ function render(){
     <td class="num">${fmt(precioMedio,4)}</td>
     <td></td><td></td><td></td><td></td><td></td>
   </tr>`;
-
-  dibujarGrafico(filtradas);
 }
 
-function dibujarGrafico(lista){
-  const box = document.getElementById('chartBox');
+/* ---------- Dashboard (Resumen) ---------- */
+
+function renderDashboard(){
+  const empty = document.getElementById('dashEmpty');
+  const content = document.getElementById('dashContent');
+
+  if(compras.length===0){
+    empty.style.display = 'block';
+    content.style.display = 'none';
+    return;
+  }
+  empty.style.display = 'none';
+  content.style.display = 'block';
+
+  const esperada = parseFloat(document.getElementById('comisionEsperada').value) || 0;
+  const totalImporte = compras.reduce((s,c)=>s+c.importe,0);
+  const totalUsdc = compras.reduce((s,c)=>s+c.usdc,0);
+  const comisiones = compras.filter(c=>c.comision!=null);
+  const comisionMedia = comisiones.length ? comisiones.reduce((s,c)=>s+c.comision,0)/comisiones.length : null;
+  const precioMedio = totalUsdc ? totalImporte/totalUsdc : 0;
+
+  document.getElementById('dashTotalImporte').textContent = '€' + fmt(totalImporte,2);
+  document.getElementById('dashTotalUsdc').textContent = fmt(totalUsdc,2);
+  document.getElementById('dashPrecioMedio').textContent = fmt(precioMedio,4);
+  document.getElementById('dashPrecioMedioSub').textContent = 'EUR por USDC';
+  document.getElementById('dashNumCompras').textContent = compras.length;
+  document.getElementById('dashComisionMedia').textContent = comisionMedia!=null ? ('comisión media ' + fmt(comisionMedia,2) + '%') : '';
+
+  const alertas = [];
+  const atipicas = compras.filter(c => c.comision==null || Math.abs((c.comision||0)-esperada) > 0.01);
+  if(atipicas.length>0){
+    alertas.push({tipo:'warn', texto: `${atipicas.length} compra(s) con comisión distinta a la esperada (${fmt(esperada,2)}%)`});
+  }
+  const disputadas = compras.filter(c=>c.estado==='Disputada');
+  if(disputadas.length>0){
+    alertas.push({tipo:'danger', texto: `${disputadas.length} compra(s) marcada(s) como disputada`});
+  }
+  const parciales = compras.filter(c=>c.estado==='Parcial');
+  if(parciales.length>0){
+    alertas.push({tipo:'warn', texto: `${parciales.length} compra(s) con fill parcial`});
+  }
+  const alertsCard = document.getElementById('dashAlertsCard');
+  if(alertas.length>0){
+    alertsCard.style.display = 'block';
+    document.getElementById('dashAlerts').innerHTML = alertas.map(a=>
+      `<div class="alert-item ${a.tipo==='danger'?'danger':''}"><span class="dot2"></span>${a.texto}</div>`
+    ).join('');
+  } else {
+    alertsCard.style.display = 'none';
+  }
+
+  const recientes = [...compras].sort((a,b)=> b.fecha.localeCompare(a.fecha)).slice(0,5);
+  document.getElementById('dashMiniList').innerHTML = recientes.map(c=>`
+    <div class="mini-row">
+      <div class="mr-left">
+        <span>${c.plataforma||'—'}</span>
+        <span class="mr-date">${c.fecha}</span>
+      </div>
+      <span class="mr-val">${monedaSimbolo(c.moneda)}${fmt(c.importe,2)} → ${fmt(c.usdc,2)} USDC</span>
+    </div>
+  `).join('');
+
+  dibujarGrafico(compras, 'chartBoxDash');
+}
+
+function dibujarGrafico(lista, boxId){
+  const box = document.getElementById(boxId);
   if(!lista || lista.length < 2){
     box.innerHTML = `<div class="empty">Se necesitan al menos 2 compras para dibujar la evolución.</div>`;
     return;
@@ -844,9 +1051,9 @@ function dibujarGrafico(lista){
   const ordenadas = [...lista].sort((a,b)=> a.fecha.localeCompare(b.fecha));
   const puntos = ordenadas.map(c=>({fecha:c.fecha, valor:c.importe/c.usdc, ref: c.moneda==='EUR' ? fxCache[c.fecha] : null}));
 
-  const W = Math.max(560, puntos.length*60);
-  const H = 200;
-  const padL = 46, padR = 14, padT = 14, padB = 26;
+  const W = Math.max(320, Math.min(560, puntos.length*60));
+  const H = 190;
+  const padL = 44, padR = 12, padT = 12, padB = 24;
   const valores = puntos.map(p=>p.valor).concat(puntos.filter(p=>p.ref!=null).map(p=>p.ref));
   const min = Math.min(...valores) * 0.98;
   const max = Math.max(...valores) * 1.02;
@@ -857,51 +1064,51 @@ function dibujarGrafico(lista){
   const refPuntos = puntos.map((p,i)=> p.ref!=null ? {i,v:p.ref} : null).filter(Boolean);
   const refPath = refPuntos.length>1 ? refPuntos.map((p,idx)=> `${idx===0?'M':'L'} ${x(p.i).toFixed(1)} ${y(p.v).toFixed(1)}`).join(' ') : null;
 
-  const circles = puntos.map((p,i)=> `<circle cx="${x(i).toFixed(1)}" cy="${y(p.valor).toFixed(1)}" r="3" fill="#2775CA"><title>${p.fecha}: ${p.valor.toFixed(4)}</title></circle>`).join('');
+  const circles = puntos.map((p,i)=> `<circle cx="${x(i).toFixed(1)}" cy="${y(p.valor).toFixed(1)}" r="3" fill="var(--usdc)"><title>${p.fecha}: ${p.valor.toFixed(4)}</title></circle>`).join('');
 
   const labelStep = Math.ceil(puntos.length/6);
   const labels = puntos.map((p,i)=> i%labelStep===0 || i===puntos.length-1
-    ? `<text x="${x(i).toFixed(1)}" y="${H-8}" font-size="9" fill="#5B6472" font-family="IBM Plex Mono, monospace" text-anchor="middle">${p.fecha.slice(5)}</text>` : '').join('');
+    ? `<text x="${x(i).toFixed(1)}" y="${H-6}" font-size="9" fill="var(--ink-soft)" font-family="IBM Plex Mono, monospace" text-anchor="middle">${p.fecha.slice(5)}</text>` : '').join('');
 
   const gridY = [0,0.5,1].map(f=>{
     const v = min + f*(max-min);
-    return `<line x1="${padL}" x2="${W-padR}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="#EFEBDF" stroke-width="1"/>
-            <text x="${padL-6}" y="${(y(v)+3).toFixed(1)}" font-size="9" fill="#5B6472" font-family="IBM Plex Mono, monospace" text-anchor="end">${v.toFixed(3)}</text>`;
+    return `<line x1="${padL}" x2="${W-padR}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="var(--line)" stroke-width="1"/>
+            <text x="${padL-6}" y="${(y(v)+3).toFixed(1)}" font-size="9" fill="var(--ink-soft)" font-family="IBM Plex Mono, monospace" text-anchor="end">${v.toFixed(3)}</text>`;
   }).join('');
 
-  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" xmlns="http://www.w3.org/2000/svg">
     ${gridY}
-    ${refPath ? `<path d="${refPath}" fill="none" stroke="#8A93A2" stroke-width="1.5" stroke-dasharray="4 3"/>` : ''}
-    <path d="${linePath}" fill="none" stroke="#2775CA" stroke-width="2"/>
+    ${refPath ? `<path d="${refPath}" fill="none" stroke="var(--ink-soft)" stroke-width="1.5" stroke-dasharray="4 3"/>` : ''}
+    <path d="${linePath}" fill="none" stroke="var(--usdc)" stroke-width="2"/>
     ${circles}
     ${labels}
   </svg>`;
 }
 
+/* ---------- Tipo de cambio de referencia ---------- */
+
 async function actualizarTiposCambio(){
   const fechas = [...new Set(compras.filter(c=>c.moneda==='EUR').map(c=>c.fecha))].filter(f=>fxCache[f]===undefined);
   if(fechas.length===0) return;
-  const note = document.getElementById('fxNote');
-  note.textContent = 'Consultando tipo de cambio de referencia...';
-  let ok=0, fail=0;
+  let ok=0;
   for(const fecha of fechas){
     try{
       const resp = await fetch(`https://api.frankfurter.app/${fecha}?from=USD&to=EUR`);
       if(resp.ok){
         const data = await resp.json();
-        if(data && data.rates && data.rates.EUR){
-          fxCache[fecha] = data.rates.EUR;
-          ok++;
-        } else { fxCache[fecha] = null; fail++; }
-      } else { fxCache[fecha] = null; fail++; }
-    }catch(e){ fxCache[fecha] = null; fail++; }
+        fxCache[fecha] = (data && data.rates && data.rates.EUR) ? data.rates.EUR : null;
+        if(fxCache[fecha]) ok++;
+      } else { fxCache[fecha] = null; }
+    }catch(e){ fxCache[fecha] = null; }
   }
-  await guardarEnDrive();
-  note.textContent = fail>0
-    ? `Tipo de cambio: ${ok} fechas obtenidas, ${fail} no disponibles (fines de semana/festivos no tienen cotización).`
-    : (ok>0 ? `Tipo de cambio de referencia actualizado para ${ok} fecha(s).` : '');
-  render();
+  if(ok>0){
+    await guardarEnDrive();
+    render();
+    renderDashboard();
+  }
 }
+
+/* ---------- CSV ---------- */
 
 function exportarCSV(){
   if(compras.length===0){ alert('No hay compras para exportar.'); return; }
@@ -954,6 +1161,7 @@ async function importarCSV(event){
   }
   await guardarEnDrive();
   render();
+  renderDashboard();
   actualizarTiposCambio();
   event.target.value = '';
   alert(`Importadas ${importadas} compra(s).`);
@@ -961,8 +1169,12 @@ async function importarCSV(event){
 
 /* ---------- Init ---------- */
 render();
+renderDashboard();
 actualizarBloqueoUI();
 initGoogleAuth();
+['f-importe','f-usdc','f-comision'].forEach(id=>{
+  document.getElementById(id).addEventListener('input', recalcComputed);
+});
 </script>
 </body>
 </html>
