@@ -23,6 +23,15 @@
           min-width:0 en los inputs, en vez de flex-wrap). Tabla del historial: columna de editar movida a la
           izquierda como icono de lápiz, fecha en formato corto (DD/MM/AA), plataforma abreviada a una letra
           (R/W/P + inicial para el resto) y comisión reordenada justo después de la plataforma.
+  v4.2 — Añadido "Importar JSON (sustituye todo)" en Ajustes: acepta un array de compras o el objeto completo
+          {compras,fxCache,ajustes}, pide confirmación y reemplaza entero el registro guardado en Drive. Evita
+          tener que editar el archivo de Drive a mano (frágil: el editor de Google puede corromper comillas, o
+          una resubida puede crear un archivo duplicado con el mismo nombre que la app no localizaría bien).
+  v4.3 — La comisión ya no se asume nunca (antes se aceptaba un "comision_pct" tal cual venía). Ahora se calcula
+          siempre a partir del USDC bruto liberado y el neto recibido (nuevo campo "USDC bruto" en el formulario,
+          y "usdc_bruto" en el JSON) — el campo Comisión pasa a ser de solo lectura cuando hay bruto. Aplicado
+          igual en el pegado individual, la importación CSV (columna opcional "USDC bruto") y la importación
+          JSON completa. El prompt para pedirle datos a Claude ya no pide un % de comisión, pide el bruto real.
 -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -430,8 +439,9 @@
         <p class="card-title">Importar JSON completo</p>
         <p style="font-size:12.5px;color:var(--ink-soft);margin:0 0 12px;">
           Sube un archivo con el formato {"compras":[...], "fxCache":{...}, "ajustes":{...}} — o directamente un
-          array de compras (fecha/importe/moneda/plataforma/usdc_neto/comision_pct/hash/estado/notas), como el
-          que genera Claude. <b>Esto reemplaza todo el registro actual</b>, se pide confirmación antes.
+          array de compras (fecha/importe/moneda/plataforma/usdc_bruto/usdc_neto/hash/estado/notas), como el
+          que genera Claude. Si trae "usdc_bruto", la comisión se calcula sola a partir de bruto y neto — nunca
+          se asume un %. <b>Esto reemplaza todo el registro actual</b>, se pide confirmación antes.
         </p>
         <label class="btn btn-danger btn-sm" id="importJsonLabel" style="cursor:pointer;">
           Importar JSON (sustituye todo)
@@ -441,7 +451,7 @@
 
       <div class="card">
         <p class="card-title">Sobre esta app</p>
-        <p class="version-line">Registro de compras USDC · v4.1</p>
+        <p class="version-line">Registro de compras USDC · v4.3</p>
       </div>
     </section>
 
@@ -510,12 +520,16 @@
             </datalist>
           </div>
           <div>
-            <label for="f-usdc">USDC recibidos</label>
+            <label for="f-bruto">USDC bruto liberado</label>
+            <input type="number" step="0.000001" id="f-bruto" placeholder="opcional">
+          </div>
+          <div>
+            <label for="f-usdc">USDC recibidos (neto)</label>
             <input type="number" step="0.000001" id="f-usdc" placeholder="0.00">
           </div>
           <div>
             <label for="f-comision">Comisión (%)</label>
-            <input type="number" step="0.01" id="f-comision" placeholder="0.95">
+            <input type="number" step="0.01" id="f-comision" placeholder="se calcula sola si pones el bruto">
           </div>
           <div>
             <label for="f-estado">Estado</label>
@@ -734,12 +748,27 @@ function guardarAjustesYRender(){
 function recalcComputed(){
   const importe = parseFloat(document.getElementById('f-importe').value);
   const usdc = parseFloat(document.getElementById('f-usdc').value);
-  const comision = parseFloat(document.getElementById('f-comision').value);
+  const bruto = parseFloat(document.getElementById('f-bruto').value);
+  const comisionInput = document.getElementById('f-comision');
+
+  // Si hay bruto y neto, la comisión se calcula siempre a partir de ellos — no se asume ningún %.
+  if(!isNaN(bruto) && bruto>0 && !isNaN(usdc) && usdc>0){
+    const comisionCalculada = ((bruto - usdc) / bruto) * 100;
+    comisionInput.value = comisionCalculada.toFixed(4);
+    comisionInput.readOnly = true;
+    comisionInput.title = 'Calculada a partir del bruto y el neto — borra el bruto para poder escribirla a mano.';
+  } else {
+    comisionInput.readOnly = false;
+    comisionInput.title = '';
+  }
+
+  const comision = parseFloat(comisionInput.value);
   const valor = (importe>0 && usdc>0) ? importe/usdc : null;
   document.getElementById('calcValor').textContent = valor ? fmt(valor,4) : '—';
   let comisionTexto = '—';
   if(!isNaN(comision) && importe>0){
-    comisionTexto = fmt(importe*comision/100,2) + ' (' + fmt(comision,2) + '%)';
+    const origen = (!isNaN(bruto) && bruto>0) ? ' (calculada desde bruto)' : '';
+    comisionTexto = fmt(importe*comision/100,2) + ' (' + fmt(comision,2) + '%' + origen + ')';
   }
   document.getElementById('calcComision').textContent = comisionTexto;
 }
@@ -754,8 +783,8 @@ Consulta esa página en peerlytics.xyz y devuélveme SOLO un bloque JSON con est
   "importe": 0.00,
   "moneda": "EUR",
   "plataforma": "Revolut",
+  "usdc_bruto": 0.00,
   "usdc_neto": 0.00,
-  "comision_pct": 0.00,
   "hash": "0x...",
   "estado": "Completa",
   "notas": ""
@@ -763,8 +792,11 @@ Consulta esa página en peerlytics.xyz y devuélveme SOLO un bloque JSON con est
 
 Notas:
 - "importe" es lo que pagué en fiat (campo "moneda"), no el importe en USD/USDC.
-- "usdc_neto" es el USDC que realmente recibí (net to taker), no el bruto liberado.
-- "comision_pct" es el fee de la plataforma en % (fee ÷ importe bruto × 100).
+- "usdc_bruto" es el USDC liberado/total antes de descontar ningún fee (lo que el vendedor libera).
+- "usdc_neto" es el USDC que realmente recibí después del fee (net to taker/recipient).
+- NO calcules ni asumas el % de comisión — yo lo calculo a partir de bruto y neto. No pongas un "comision_pct"
+  estimado ni asumas que es 0,95%; si no encuentras el bruto exacto, dime que no está disponible en vez de
+  inventarlo.
 - Usa punto decimal, no coma. Si no encuentras un dato, pon null, no lo inventes.
 - "estado" debe ser "Completa", "Parcial" o "Disputada".`;
 
@@ -794,7 +826,14 @@ function rellenarDesdeJSON(obj){
   if(obj.plataforma) document.getElementById('f-plataforma').value = obj.plataforma;
   const usdcVal = obj.usdc_neto !== undefined ? obj.usdc_neto : obj.usdc;
   if(usdcVal !== undefined && usdcVal !== null) document.getElementById('f-usdc').value = usdcVal;
-  if(obj.comision_pct !== undefined && obj.comision_pct !== null) document.getElementById('f-comision').value = obj.comision_pct;
+  if(obj.usdc_bruto !== undefined && obj.usdc_bruto !== null){
+    document.getElementById('f-bruto').value = obj.usdc_bruto;
+  } else {
+    // Sin bruto no podemos calcular la comisión real — si además viene un comision_pct, se usa como
+    // referencia manual (editable), pero nunca se da por buena sin el bruto que la respalde.
+    document.getElementById('f-bruto').value = '';
+    if(obj.comision_pct !== undefined && obj.comision_pct !== null) document.getElementById('f-comision').value = obj.comision_pct;
+  }
   if(obj.estado) document.getElementById('f-estado').value = obj.estado;
   if(obj.hash) document.getElementById('f-hash').value = obj.hash;
   if(obj.notas) document.getElementById('f-notas').value = obj.notas;
@@ -816,7 +855,7 @@ function extraerDatos(){
 }
 
 function limpiarFormulario(){
-  ['f-fecha','f-importe','f-plataforma','f-usdc','f-comision','f-hash','f-notas','raw'].forEach(id=>document.getElementById(id).value='');
+  ['f-fecha','f-importe','f-plataforma','f-bruto','f-usdc','f-comision','f-hash','f-notas','raw'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('f-moneda').value = 'EUR';
   document.getElementById('f-estado').value = 'Completa';
   document.getElementById('extractMsg').textContent = '';
@@ -838,6 +877,7 @@ async function guardarCompra(){
   const moneda = document.getElementById('f-moneda').value;
   const plataforma = document.getElementById('f-plataforma').value.trim();
   const usdc = parseFloat(document.getElementById('f-usdc').value);
+  const bruto = parseFloat(document.getElementById('f-bruto').value);
   const comision = parseFloat(document.getElementById('f-comision').value);
   const estado = document.getElementById('f-estado').value;
   const hash = document.getElementById('f-hash').value.trim();
@@ -851,6 +891,7 @@ async function guardarCompra(){
   const entry = {
     id: editingId || (Date.now() + '-' + Math.random().toString(36).slice(2,7)),
     fecha, importe, moneda, plataforma, usdc,
+    bruto: isNaN(bruto) ? null : bruto,
     comision: isNaN(comision) ? null : comision,
     estado, hash, notas
   };
@@ -876,6 +917,7 @@ function editarCompra(id){
   document.getElementById('f-importe').value = c.importe;
   document.getElementById('f-moneda').value = c.moneda;
   document.getElementById('f-plataforma').value = c.plataforma;
+  document.getElementById('f-bruto').value = c.bruto ?? '';
   document.getElementById('f-usdc').value = c.usdc;
   document.getElementById('f-comision').value = c.comision ?? '';
   document.getElementById('f-estado').value = c.estado || 'Completa';
@@ -1160,9 +1202,9 @@ async function actualizarTiposCambio(){
 
 function exportarCSV(){
   if(compras.length===0){ alert('No hay compras para exportar.'); return; }
-  const headers = ['Fecha','Importe','Moneda','Plataforma','USDC recibidos','Comision %','Valor USDC','Estado','Hash','Notas'];
+  const headers = ['Fecha','Importe','Moneda','Plataforma','USDC bruto','USDC recibidos','Comision %','Valor USDC','Estado','Hash','Notas'];
   const rows = compras.map(c => [
-    c.fecha, c.importe, c.moneda, c.plataforma, c.usdc, c.comision ?? '', (c.importe/c.usdc).toFixed(4), c.estado||'Completa', c.hash, (c.notas||'').replace(/,/g,';')
+    c.fecha, c.importe, c.moneda, c.plataforma, c.bruto ?? '', c.usdc, c.comision ?? '', (c.importe/c.usdc).toFixed(4), c.estado||'Completa', c.hash, (c.notas||'').replace(/,/g,';')
   ]);
   const csv = [headers.join(','), ...rows.map(r=>r.join(','))].join('\n');
   const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
@@ -1193,14 +1235,23 @@ async function importarCSV(event){
     const importe = parseFloat(get('importe'));
     const usdc = parseFloat(get('usdc recibidos'));
     if(!fecha || isNaN(importe) || isNaN(usdc)) continue;
+    const brutoRaw = get('usdc bruto');
+    const bruto = brutoRaw ? parseFloat(brutoRaw) : NaN;
     const comisionRaw = get('comision %');
+    let comision;
+    if(!isNaN(bruto) && bruto>0){
+      comision = ((bruto - usdc) / bruto) * 100;
+    } else {
+      comision = comisionRaw ? parseFloat(comisionRaw) : null;
+    }
     compras.push({
       id: Date.now() + '-' + Math.random().toString(36).slice(2,7) + '-' + i,
       fecha, importe,
       moneda: get('moneda') || 'EUR',
       plataforma: get('plataforma'),
       usdc,
-      comision: comisionRaw ? parseFloat(comisionRaw) : null,
+      bruto: !isNaN(bruto) ? bruto : null,
+      comision,
       estado: get('estado') || 'Completa',
       hash: get('hash'),
       notas: get('notas')
@@ -1252,18 +1303,29 @@ async function importarJSONCompleto(event){
   const confirmado = confirm(`Esto va a REEMPLAZAR por completo tu registro actual (${compras.length} compra(s)) por las ${listaCompras.length} de este archivo. ¿Seguro que quieres continuar?`);
   if(!confirmado){ event.target.value = ''; return; }
 
-  compras = listaCompras.map((item, i) => ({
-    id: item.id || (Date.now() + '-' + Math.random().toString(36).slice(2,7) + '-' + i),
-    fecha: item.fecha,
-    importe: item.importe,
-    moneda: item.moneda || 'EUR',
-    plataforma: item.plataforma || '',
-    usdc: item.usdc !== undefined ? item.usdc : item.usdc_neto,
-    comision: item.comision !== undefined ? item.comision : (item.comision_pct !== undefined ? item.comision_pct : null),
-    estado: item.estado || 'Completa',
-    hash: item.hash || '',
-    notas: item.notas || ''
-  }));
+  compras = listaCompras.map((item, i) => {
+    const usdcNeto = item.usdc !== undefined ? item.usdc : item.usdc_neto;
+    const bruto = item.bruto !== undefined ? item.bruto : item.usdc_bruto;
+    let comision;
+    if(bruto !== undefined && bruto !== null && bruto > 0 && usdcNeto !== undefined && usdcNeto !== null){
+      comision = ((bruto - usdcNeto) / bruto) * 100;
+    } else {
+      comision = item.comision !== undefined ? item.comision : (item.comision_pct !== undefined ? item.comision_pct : null);
+    }
+    return {
+      id: item.id || (Date.now() + '-' + Math.random().toString(36).slice(2,7) + '-' + i),
+      fecha: item.fecha,
+      importe: item.importe,
+      moneda: item.moneda || 'EUR',
+      plataforma: item.plataforma || '',
+      usdc: usdcNeto,
+      bruto: (bruto !== undefined && bruto !== null) ? bruto : null,
+      comision,
+      estado: item.estado || 'Completa',
+      hash: item.hash || '',
+      notas: item.notas || ''
+    };
+  });
 
   if(nuevaFxCache) fxCache = nuevaFxCache;
   if(nuevosAjustes && nuevosAjustes.comisionEsperada !== undefined){
@@ -1283,7 +1345,7 @@ render();
 renderDashboard();
 actualizarBloqueoUI();
 initGoogleAuth();
-['f-importe','f-usdc','f-comision'].forEach(id=>{
+['f-importe','f-usdc','f-bruto','f-comision'].forEach(id=>{
   document.getElementById(id).addEventListener('input', recalcComputed);
 });
 </script>
