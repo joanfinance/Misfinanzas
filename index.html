@@ -29,7 +29,7 @@
 <script type="text/babel" data-presets="react">
 const {useState, useEffect, useRef, useCallback, useMemo} = React;
 
-const VERSION = "v5.2";
+const VERSION = "v5.3";
 const CLIENT_ID = "343869806932-59pi5fq8micnj2rrlagmcl6c9dvrad5l.apps.googleusercontent.com";
 const API_KEY = "AIzaSyAnX2AqSv_od3LYvT7n8WaCWL5T0WTmxZM";
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
@@ -606,10 +606,17 @@ function App() {
   // Notas del mes actual
   const mesKey = `${mes.y}-${String(mes.m+1).padStart(2,"0")}`;
   const notasDelMes = data.notasMes?.[mesKey] || "";
+  const notasTimeoutRef = useRef(null);
   
   const saveNotasMes = async (texto) => {
-    const nd = Object.assign({}, data, {notasMes: Object.assign({}, data.notasMes, {[mesKey]: texto})});
-    await saveData(nd);
+    // Cancel previous pending save
+    if (notasTimeoutRef.current) clearTimeout(notasTimeoutRef.current);
+    
+    // Wait 1 second after last keystroke before saving
+    notasTimeoutRef.current = setTimeout(async () => {
+      const nd = Object.assign({}, data, {notasMes: Object.assign({}, data.notasMes, {[mesKey]: texto})});
+      await saveData(nd);
+    }, 1000);
   };
 
   const importeRef = useRef(null);
